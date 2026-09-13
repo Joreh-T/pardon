@@ -74,6 +74,91 @@ pub fn row_to_card(row: &[&str]) -> Option<WordCard> {
     })
 }
 
+pub mod import {
+    use super::row_to_card;
+    use rusqlite::Connection;
+    use std::io::Read;
+
+    pub fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS entries (
+                word TEXT PRIMARY KEY,
+                phonetic TEXT, definition TEXT, translation TEXT,
+                pos_json TEXT, exchange_json TEXT,
+                collins INTEGER, oxford INTEGER, tags TEXT, bnc INTEGER, frq INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_entries_word ON entries(word COLLATE NOCASE);
+            CREATE TABLE IF NOT EXISTS wordforms (form TEXT PRIMARY KEY, lemma TEXT NOT NULL);",
+        )
+    }
+
+    /// 返回本次新插入的词条数（已存在的词条跳过）。
+    pub fn import_csv(reader: impl Read, conn: &Connection) -> anyhow::Result<u64> {
+        use anyhow::Context;
+        create_schema(conn).context("create schema")?;
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .from_reader(reader);
+        conn.execute_batch("BEGIN")?;
+        let mut inserted = 0u64;
+        let result = (|| -> anyhow::Result<()> {
+            for rec in rdr.records() {
+                let rec = rec.context("read csv record")?;
+                let row: Vec<&str> = rec.iter().collect();
+                let Some(card) = row_to_card(&row) else { continue };
+                let pos_json = serde_json::to_string(&card.pos).unwrap();
+                let ex_json = card
+                    .exchange
+                    .as_ref()
+                    .map(|e| serde_json::to_string(e).unwrap());
+                let changed = conn.execute(
+                    "INSERT OR IGNORE INTO entries VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                    rusqlite::params![
+                        card.word,
+                        row.get(1).copied().unwrap_or(""),
+                        row.get(2).copied().unwrap_or(""),
+                        row.get(3).copied().unwrap_or(""),
+                        pos_json,
+                        ex_json,
+                        card.collins,
+                        card.oxford as i64,
+                        card.tags.join(" "),
+                        row.get(8).and_then(|s| s.parse().ok()).unwrap_or(0i64),
+                        row.get(9).and_then(|s| s.parse().ok()).unwrap_or(0i64),
+                    ],
+                )?;
+                if changed == 1 {
+                    inserted += 1;
+                    if let Some(ex) = &card.exchange {
+                        for form in [
+                            ex.past.as_deref(),
+                            ex.pp.as_deref(),
+                            ex.ing.as_deref(),
+                            ex.third.as_deref(),
+                            ex.comparative.as_deref(),
+                            ex.superlative.as_deref(),
+                            ex.plural.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            let _ = conn.execute(
+                                "INSERT OR IGNORE INTO wordforms VALUES (?1, ?2)",
+                                rusqlite::params![form, card.word],
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })();
+        conn.execute_batch("COMMIT")?;
+        result?;
+        Ok(inserted)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
