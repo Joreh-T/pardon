@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod openai;
 pub mod prompt;
+pub mod youdao;
 
 use crate::lang::Lang;
 
