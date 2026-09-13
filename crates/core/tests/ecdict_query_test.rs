@@ -35,6 +35,14 @@ fn gave_hits_entry_with_empty_pos() {
 }
 
 #[test]
+fn empty_phonetic_normalizes_to_none() {
+    // fixture 中 give up 行 phonetic 为空（gave 行 phonetic 是 ɡeɪv，非空）；
+    // 与 row_to_card（Task 4）对齐：空 phonetic 在查询层归一化为 None
+    let card = db().lookup("give up").unwrap();
+    assert!(card.phonetic.is_none(), "empty phonetic must be None, got {:?}", card.phonetic);
+}
+
+#[test]
 fn miss_returns_none() {
     assert!(db().lookup("nonexistentword").is_none());
 }

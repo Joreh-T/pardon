@@ -19,7 +19,7 @@ fn card_from_row(row: &rusqlite::Row) -> rusqlite::Result<WordCard> {
     Ok(WordCard {
         found: true,
         word,
-        phonetic: phonetic.map(|p| Phonetic { uk: Some(p), us: None }),
+        phonetic: phonetic.filter(|p| !p.is_empty()).map(|p| Phonetic { uk: Some(p), us: None }),
         pos: serde_json::from_str::<Vec<PosGloss>>(&pos_json).unwrap_or_default(),
         definition: definition.split('\n').map(str::trim)
             .filter(|s| !s.is_empty()).map(String::from).collect(),
