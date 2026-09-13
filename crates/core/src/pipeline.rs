@@ -256,8 +256,9 @@ impl Pipeline {
     }
 }
 
-/// PARDON_HOME 环境变量优先（非空时）；缺省 `dirs::data_dir()/pardon`。
-fn pardon_home() -> anyhow::Result<PathBuf> {
+/// 数据根目录：`PARDON_HOME` 环境变量优先（非空时）；缺省
+/// `dirs::data_dir()/pardon`。词典在 `<home>/dict`，TTS 缓存在 `<home>/tts`。
+pub fn pardon_home() -> anyhow::Result<PathBuf> {
     if let Ok(home) = std::env::var("PARDON_HOME") {
         if !home.is_empty() {
             return Ok(PathBuf::from(home));

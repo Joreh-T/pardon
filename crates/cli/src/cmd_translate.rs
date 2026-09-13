@@ -207,7 +207,8 @@ fn resolve_langs(source: &str, target: &str, text: &str) -> anyhow::Result<(Lang
     Ok((from, to))
 }
 
-fn parse_lang(s: &str) -> anyhow::Result<Lang> {
+/// 语言旗标解析（translate / speak 共用）：`en`/`zh` → Lang，其他值报错。
+pub(crate) fn parse_lang(s: &str) -> anyhow::Result<Lang> {
     match s {
         "en" => Ok(Lang::En),
         "zh" => Ok(Lang::Zh),

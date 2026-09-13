@@ -6,6 +6,7 @@
 //! timeout/engine，exit 124/2）。
 
 mod cmd_lookup;
+mod cmd_speak;
 mod cmd_translate;
 mod output;
 
@@ -57,10 +58,20 @@ enum Cmd {
     },
     /// Translate text (word or sentence)
     Translate(TranslateArgs),
-    /// Speak text aloud (TTS)
-    Speak { text: String },
-    /// Show or write default config
-    Config { #[arg(long)] init: bool },
+    /// Speak text aloud (TTS; no stdout output on success)
+    Speak {
+        /// Text to speak
+        text: String,
+        /// Language: auto | en | zh (auto = detect from text)
+        #[arg(long, default_value = "auto")]
+        lang: String,
+    },
+    /// Show config path, or write the default config (--init)
+    Config {
+        /// Write the default config to the config path (refuses if it exists)
+        #[arg(long)]
+        init: bool,
+    },
 }
 
 #[tokio::main]
@@ -69,10 +80,28 @@ async fn main() {
     let code = match cli.cmd {
         Cmd::Lookup { word, json } => cmd_lookup::run(&word, json),
         Cmd::Translate(args) => cmd_translate::run(&args).await,
-        // 未实现子命令：走统一错误出口（stderr JSON + exit 2）
-        Cmd::Speak { .. } => Err(anyhow::anyhow!("todo: `pardon speak` is not implemented yet")),
-        Cmd::Config { .. } => Err(anyhow::anyhow!("todo: `pardon config` is not implemented yet")),
+        Cmd::Speak { text, lang } => cmd_speak::run(&text, &lang).await,
+        Cmd::Config { init } => run_config(init),
     }
     .unwrap_or_else(|e| output::error_exit(e));
     std::process::exit(code);
+}
+
+/// `pardon config [--init]`：`--init` 把默认配置写到生效路径
+/// （[`pardon_core::config::config_path`]，`PARDON_CONFIG` 可覆盖）；文件已
+/// 存在 → 报错 exit 2（消息含路径），不覆盖。成功与裸 `config` 都打印
+/// 路径、exit 0。
+fn run_config(init: bool) -> anyhow::Result<i32> {
+    let path = pardon_core::config::config_path();
+    if init && path.exists() {
+        anyhow::bail!(
+            "config already exists: {} (edit it in place, or delete it first)",
+            path.display()
+        );
+    }
+    if init {
+        pardon_core::config::write_default(&path)?;
+    }
+    println!("{}", path.display());
+    Ok(0)
 }

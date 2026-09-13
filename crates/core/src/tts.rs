@@ -1,9 +1,10 @@
 //! TTS：有道 dictvoice 下载 + mp3 本地缓存 + espeak-ng 离线兜底。
 //!
 //! 朗读流程（`Tts::speak`）：
-//! 1. 命中缓存（`sha1(voice|text).mp3`；0 字节视为未命中）→ 直接播放；
-//! 2. 未命中 → 下载 dictvoice mp3（5s 超时）→ 原子写缓存（tmp+rename）→ 播放；
-//! 3. 下载失败 → 把原文 UTF-8 字节交给播放链，
+//! 1. `PARDON_TTS_DISABLE=1`（测试开关）→ 不下载不播放直接 Ok；
+//! 2. 命中缓存（`sha1(voice|text).mp3`；0 字节视为未命中）→ 直接播放；
+//! 3. 未命中 → 下载 dictvoice mp3（5s 超时）→ 原子写缓存（tmp+rename）→ 播放；
+//! 4. 下载失败 → 把原文 UTF-8 字节交给播放链，
 //!    合成型播放器（espeak-ng）朗读文本，非合成播放器（rodio）解码失败跳过。
 
 use std::path::{Path, PathBuf};
@@ -15,6 +16,18 @@ use sha1::{Digest, Sha1};
 use crate::lang::Lang;
 
 const YOUDAO_HOST: &str = "dict.youdao.com";
+
+/// 测试开关判定：`PARDON_TTS_DISABLE` 精确等于 `"1"` 才禁用。
+/// 纯函数（不读 env），便于零竞态单测；真实读取在 [`tts_disabled`]。
+fn parse_tts_disable(v: Option<&str>) -> bool {
+    v == Some("1")
+}
+
+/// 读 env 判定测试开关。置于 [`Tts::speak`] 入口：置 1 时不下载不播放
+/// 直接 Ok——集成测试借此跳过真实网络与音频设备。
+fn tts_disabled() -> bool {
+    parse_tts_disable(std::env::var("PARDON_TTS_DISABLE").ok().as_deref())
+}
 
 /// 发音（对应 dictvoice 的 `type` / `le` 参数）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,7 +171,11 @@ impl Tts {
     }
 
     /// 朗读 `text`：`En`→Uk、`Zh`→Zh（M1 英文固定取英音）。
+    /// 测试开关：环境变量 `PARDON_TTS_DISABLE=1` 时直接 Ok，不下载不播放。
     pub async fn speak(&self, text: &str, lang: Lang) -> anyhow::Result<()> {
+        if tts_disabled() {
+            return Ok(());
+        }
         let voice = match lang {
             Lang::En => Voice::Uk,
             Lang::Zh => Voice::Zh,
@@ -250,6 +267,18 @@ mod tests {
             .build()
             .unwrap();
         Tts::with_client(cache_dir, players, http)
+    }
+
+    #[test]
+    fn tts_disable_switch_is_exact_1() {
+        // 纯函数判定：不触碰进程环境（env 是进程全局的，核心单测并行跑，
+        // 改 env 会与其他 speak 用例竞态）。真实读取 env 的路径由 CLI 集成
+        // 测试（独立子进程 + PARDON_TTS_DISABLE=1）覆盖。
+        assert!(!parse_tts_disable(None));
+        assert!(!parse_tts_disable(Some("")));
+        assert!(!parse_tts_disable(Some("0")));
+        assert!(!parse_tts_disable(Some("true")));
+        assert!(parse_tts_disable(Some("1")));
     }
 
     #[test]

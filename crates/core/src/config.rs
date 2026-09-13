@@ -77,13 +77,19 @@ pub fn default_config_path() -> PathBuf {
         .join("config.toml")
 }
 
-/// 读取配置：`PARDON_CONFIG` 环境变量覆盖路径；文件不存在 → 内置默认。
-pub fn load() -> Result<AppConfig, ConfigError> {
-    let path = std::env::var("PARDON_CONFIG")
+/// 生效的配置文件路径：`PARDON_CONFIG` 环境变量（非空时）覆盖；缺省
+/// [`default_config_path`]。读取（[`load`]）与 `config --init` 共用此解析。
+pub fn config_path() -> PathBuf {
+    std::env::var("PARDON_CONFIG")
         .ok()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(default_config_path);
+        .unwrap_or_else(default_config_path)
+}
+
+/// 读取配置：路径见 [`config_path`]；文件不存在 → 内置默认。
+pub fn load() -> Result<AppConfig, ConfigError> {
+    let path = config_path();
     match std::fs::read_to_string(&path) {
         Ok(text) => load_from_str(&text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppConfig::default()),
