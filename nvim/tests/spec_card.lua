@@ -33,6 +33,18 @@ local ok2, mlines = pcall(vim.api.nvim_buf_get_lines, card._last_buf, 0, -1, fal
 assert(ok2, 'miss buffer readable')
 assert(vim.tbl_contains(mlines, 'helo'), vim.inspect(mlines))
 assert(vim.tbl_contains(mlines, '未命中，相近词: hello'), vim.inspect(mlines))
+local miss_win = card._last_win
+
+-- collins=0 card (ECDICT star 0): zero stars — the title must be exactly
+-- `zero  /ˈzɪəroʊ/` with no empty star slot / trailing decoration spaces.
+card.show('zero')
+local zero_shown = vim.wait(3000, function()
+  return card._last_win ~= nil and card._last_win ~= miss_win
+end)
+assert(zero_shown and card._last_win, 'zero card float should open')
+local ok3, zlines = pcall(vim.api.nvim_buf_get_lines, card._last_buf, 0, -1, false)
+assert(ok3, 'zero buffer readable')
+assert(vim.tbl_contains(zlines, 'zero  /ˈzɪəroʊ/'), vim.inspect(zlines))
 
 vim.api.nvim_out_write('CARD_OK\n')
 vim.cmd('qa!')

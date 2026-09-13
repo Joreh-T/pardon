@@ -26,6 +26,12 @@ case "$1" in
 EOF
         exit 1
         ;;
+      zero)
+        # ECDICT star=0 serializes collins:0 — must render no star slot.
+        cat <<'EOF'
+{"found":true,"word":"zero","phonetic":{"uk":"ˈzɪəroʊ"},"pos":[{"pos":"","gloss":["零"]}],"collins":0,"oxford":false,"tags":[],"source":"ecdict"}
+EOF
+        ;;
       *)
         cat <<'EOF'
 {"found":true,"word":"run","phonetic":{"uk":"rʌn"},"pos":[{"pos":"n.","gloss":["跑步"]},{"pos":"v.","gloss":["跑","运转"]}],"definition":["move fast","operate"],"exchange":{"past":"ran","pp":"run","ing":"running","third":"runs","lemma":"run"},"collins":3,"oxford":true,"tags":["zk","gk","cet4"],"source":"ecdict"}

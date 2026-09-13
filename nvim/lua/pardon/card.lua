@@ -19,7 +19,9 @@ local function title_line(c)
   if c.oxford then
     s = s .. '  ●'
   end
-  if c.collins then
+  -- collins may be 0 (ECDICT star 0): only a positive count gets a star slot,
+  -- otherwise the title would end in two decoration spaces.
+  if c.collins and c.collins > 0 then
     s = s .. '  ' .. string.rep('★', c.collins)
   end
   if c.tags and #c.tags > 0 then
