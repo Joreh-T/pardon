@@ -1,3 +1,4 @@
+pub mod openai;
 pub mod prompt;
 
 use crate::lang::Lang;
