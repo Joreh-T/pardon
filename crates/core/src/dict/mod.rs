@@ -1,3 +1,5 @@
+pub mod ecdict;
+
 use serde::{Deserialize, Serialize};
 
 /// ECDICT translation 字段中出现的词性缩写（行首前缀）。
