@@ -1,4 +1,5 @@
 pub mod ecdict;
+pub mod ecdict_query;
 
 use serde::{Deserialize, Serialize};
 
