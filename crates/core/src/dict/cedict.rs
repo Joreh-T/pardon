@@ -102,7 +102,9 @@ pub struct CedictDb {
 }
 
 impl CedictDb {
-    const SCHEMA: &str = "CREATE TABLE cedict (simplified TEXT PRIMARY KEY, traditional TEXT, pinyin TEXT, glosses TEXT);";
+    /// `IF NOT EXISTS`：对已有库重复导入（dicts/README.md 承诺的覆盖语义）
+    /// 走 INSERT OR REPLACE 刷新，而不是报 table already exists。
+    const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS cedict (simplified TEXT PRIMARY KEY, traditional TEXT, pinyin TEXT, glosses TEXT);";
 
     /// 解析 CEDICT 流并写入 `conn`；返回导入条数（from_reader / import_to_path 共用）。
     fn fill(conn: &Connection, reader: impl Read) -> anyhow::Result<u64> {
