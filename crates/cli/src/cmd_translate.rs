@@ -132,9 +132,15 @@ fn exit_on_outcome(
 
 /// 退出码裁决：只有全链失败（译文与引擎皆空）才是错误（stderr Error
 /// JSONL + exit 2）；词路由命中但无释义（engine 非空）不是，放行。
+/// 消息带配置提示：免费 web 引擎失效后这是最可能的用户处境。
 fn finish(t: &Translation) -> anyhow::Result<()> {
     if t.translation.is_empty() && t.engine.is_empty() {
-        output::event_exit("engine", "all translation engines failed".into(), 2);
+        output::event_exit(
+            "engine",
+            "all translation engines failed (hint: configure an llm provider, see README)"
+                .into(),
+            2,
+        );
     }
     Ok(())
 }

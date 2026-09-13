@@ -225,6 +225,11 @@ async fn total_chain_failure_exits_2_stderr_only() {
     let v: Value = serde_json::from_str(String::from_utf8_lossy(&out.stderr).trim()).unwrap();
     assert_eq!(v["type"], "error");
     assert_eq!(v["code"], "engine");
+    // 全链失败时给出可行动的提示（Fix 7；timeout 路径不带）
+    assert!(
+        v["message"].as_str().unwrap_or_default().contains("hint: configure an llm provider"),
+        "message 应含 LLM 配置提示：{v}"
+    );
 }
 
 /// 6c. 词路由命中但无释义（如 "gave" 只有 exchange 无 gloss）：译文空、

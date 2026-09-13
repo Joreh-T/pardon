@@ -16,7 +16,11 @@ fn resolve_lang(flag: &str, text: &str) -> anyhow::Result<Lang> {
 }
 
 /// 朗读 `text`。返回进程退出码：0 成功 / 2 参数或 TTS 错误。
+/// 空 / 纯空白文本是参数错误：直接 exit 2，不做无意义的 TTS 往返。
 pub async fn run(text: &str, lang_flag: &str) -> anyhow::Result<i32> {
+    if text.trim().is_empty() {
+        anyhow::bail!("empty text: nothing to speak");
+    }
     let lang = resolve_lang(lang_flag, text)?;
     let cache_dir = pardon_core::pipeline::pardon_home()?.join("tts");
     pardon_core::tts::Tts::new(cache_dir).speak(text, lang).await?;

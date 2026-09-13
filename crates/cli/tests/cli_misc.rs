@@ -91,3 +91,15 @@ fn speak_unknown_lang_exits_2() {
         .code(2)
         .stderr(predicates::str::contains("unknown language"));
 }
+
+#[test]
+fn speak_empty_text_exits_2() {
+    let dir = tempfile::tempdir().unwrap();
+    pardon()
+        .env("PARDON_HOME", dir.path())
+        .env("PARDON_TTS_DISABLE", "1")
+        .args(["speak", ""]) // 空串 → 参数错误 exit 2，不应走到 TTS
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("empty text"));
+}
