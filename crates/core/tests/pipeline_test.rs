@@ -3,12 +3,12 @@
 //! `PARDON_HOME` / `PARDON_YOUDAO_BASE` 是进程级环境变量且测试默认并行：
 //! 所有触碰它们的测试经 `ENV_LOCK` 串行（`TestEnv` 持锁期间 set，Drop 时还原）。
 
-use pardon_core::config::{load_from_str, AppConfig};
+use pardon_core::config::{load_from_str, AppConfig, LlmConfig, ProviderConfig, ProviderType};
 use pardon_core::dict::cedict::CedictDb;
 use pardon_core::dict::ecdict::import::import_csv;
 use pardon_core::engine::TranslateRequest;
 use pardon_core::lang::Lang;
-use pardon_core::pipeline::{card_text, Pipeline};
+use pardon_core::pipeline::{card_text, LlmEngine, Pipeline};
 use rusqlite::Connection;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -287,4 +287,73 @@ async fn chain_with_builds_single_engine_chain() {
     // 未配置 provider → llm 单链报错；未知引擎名报错
     assert!(p.chain_with("llm").is_err());
     assert!(p.chain_with("nope").is_err());
+}
+
+/// ollama provider 的 base_url / 提示词覆盖应透传到引擎，而非被
+/// `for_ollama` 的 11434 缺省覆盖（Fix 4）。
+#[test]
+fn ollama_provider_honors_base_url_and_prompt_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    let _env = set_env(dir.path(), None);
+    let cfg = load_from_str(
+        r#"
+default_engine = "youdao"
+[llm]
+default_provider = "local"
+
+[[llm.providers]]
+id = "local"
+type = "ollama"
+base_url = "http://192.168.1.5:11434/v1/"
+model = "qwen2.5:7b"
+system_prompt = "custom system"
+user_prompt_template = "TRANSLATE {text}"
+"#,
+    )
+    .unwrap();
+    let p = Pipeline::from_config(&cfg).unwrap();
+    p.chain_with("llm").expect("ollama provider should back the \"llm\" engine");
+    match p.llm.as_deref().expect("ollama provider should build an llm engine") {
+        LlmEngine::OpenAi(e) => {
+            let c = e.config();
+            // 尾部 '/' 被构造时 trim；其余字段按 provider 行透传
+            assert_eq!(c.base_url, "http://192.168.1.5:11434/v1");
+            assert_eq!(c.id, "local");
+            assert_eq!(c.model, "qwen2.5:7b");
+            assert_eq!(c.system_prompt.as_deref(), Some("custom system"));
+            assert_eq!(c.user_prompt_template.as_deref(), Some("TRANSLATE {text}"));
+        }
+        other => panic!("ollama should map to the OpenAI-compatible engine, got {}", other.id()),
+    }
+}
+
+/// base_url 留空（结构直构绕过校验；load_from_str 会拒绝空 base_url）→
+/// 回退本机 11434 缺省，引擎仍可构造。
+#[test]
+fn ollama_provider_with_empty_base_url_falls_back_to_11434() {
+    let dir = tempfile::tempdir().unwrap();
+    let _env = set_env(dir.path(), None);
+    let cfg = AppConfig {
+        llm: LlmConfig {
+            default_provider: "local".into(),
+            providers: vec![ProviderConfig {
+                id: "local".into(),
+                provider_type: ProviderType::Ollama,
+                base_url: String::new(),
+                model: "qwen2.5:7b".into(),
+                api_key: None,
+                api_key_env: None,
+                system_prompt: None,
+                user_prompt_template: None,
+            }],
+        },
+        ..AppConfig::default()
+    };
+    let p = Pipeline::from_config(&cfg).unwrap();
+    match p.llm.as_deref().expect("empty base_url should still build the engine") {
+        LlmEngine::OpenAi(e) => {
+            assert_eq!(e.config().base_url, "http://127.0.0.1:11434/v1");
+        }
+        other => panic!("ollama should map to the OpenAI-compatible engine, got {}", other.id()),
+    }
 }

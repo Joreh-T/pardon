@@ -26,12 +26,15 @@ pub struct OpenAiConfig {
     pub user_prompt_template: Option<String>,
 }
 
+/// Ollama OpenAI 兼容层的缺省端点（provider `base_url` 留空时使用）。
+pub const OLLAMA_DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434/v1";
+
 impl OpenAiConfig {
-    /// Ollama 的 OpenAI 兼容端点（`base_url http://127.0.0.1:11434/v1`，key "ollama"）。
+    /// Ollama 的 OpenAI 兼容端点（`base_url` [`OLLAMA_DEFAULT_BASE_URL`]，key "ollama"）。
     pub fn for_ollama(model: &str) -> Self {
         Self {
             id: "ollama".into(),
-            base_url: "http://127.0.0.1:11434/v1".into(),
+            base_url: OLLAMA_DEFAULT_BASE_URL.into(),
             api_key: "ollama".into(),
             model: model.into(),
             system_prompt: None,
@@ -56,6 +59,11 @@ impl OpenAiEngine {
             .with_api_key(cfg.api_key.clone());
         let name = Box::leak(cfg.id.clone().into_boxed_str());
         Self { name, cfg, client: Client::with_config(sdk_cfg) }
+    }
+
+    /// 引擎实际生效的配置（组装正确性的只读断言用，如 pipeline 测试）。
+    pub fn config(&self) -> &OpenAiConfig {
+        &self.cfg
     }
 
     fn build_request(&self, req: &TranslateRequest) -> Result<CreateChatCompletionRequest, EngineError> {

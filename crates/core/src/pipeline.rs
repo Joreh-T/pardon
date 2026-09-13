@@ -10,7 +10,7 @@ use crate::dict::ecdict_query::EcdictDb;
 use crate::dict::{DictProvider, WordCard};
 use crate::engine::anthropic::{AnthropicConfig, AnthropicEngine};
 use crate::engine::bing::BingEngine;
-use crate::engine::openai::{OpenAiConfig, OpenAiEngine};
+use crate::engine::openai::{OpenAiConfig, OpenAiEngine, OLLAMA_DEFAULT_BASE_URL};
 use crate::engine::youdao::YoudaoEngine;
 use crate::engine::{Chain, Engine, EngineError, TranslateRequest};
 use crate::lang::{self, Lang};
@@ -297,7 +297,9 @@ fn load_cedict(path: &Path) -> anyhow::Result<CedictDb> {
 /// 由 `llm.default_provider` 指向的 provider 构造 LLM 引擎；未指定或
 /// 找不到 provider → None。base_url 去掉尾部 '/'（避免拼出 `//…`）。
 /// openai 无 key → "none"（部分本地端点不校验）；anthropic 无 key → 空串
-/// 照常构造（请求 401 后由引擎链兜底）；ollama → OpenAI 兼容层。
+/// 照常构造（请求 401 后由引擎链兜底）；ollama → OpenAI 兼容层，同样
+/// 透传 provider 的 base_url / 提示词覆盖（base_url 留空才用本机 11434
+/// 缺省，见 [`OpenAiConfig::for_ollama`]）。
 fn build_llm(cfg: &AppConfig) -> Option<Arc<LlmEngine>> {
     let id = cfg.llm.default_provider.as_str();
     if id.is_empty() {
@@ -323,7 +325,20 @@ fn build_llm(cfg: &AppConfig) -> Option<Arc<LlmEngine>> {
             user_prompt_template: p.user_prompt_template.clone(),
         })),
         ProviderType::Ollama => {
-            LlmEngine::OpenAi(OpenAiEngine::new(OpenAiConfig::for_ollama(&p.model)))
+            let base_url = if base_url.is_empty() {
+                OLLAMA_DEFAULT_BASE_URL.to_string()
+            } else {
+                base_url
+            };
+            LlmEngine::OpenAi(OpenAiEngine::new(OpenAiConfig {
+                id: p.id.clone(),
+                base_url,
+                // 无 key 来源时回退 "ollama"（部分 OpenAI 兼容层要求非空 key）
+                api_key: p.resolve_api_key(std::env::var).unwrap_or_else(|| "ollama".into()),
+                model: p.model.clone(),
+                system_prompt: p.system_prompt.clone(),
+                user_prompt_template: p.user_prompt_template.clone(),
+            }))
         }
     };
     Some(Arc::new(engine))
