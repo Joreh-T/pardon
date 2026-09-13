@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod bing;
 pub mod openai;
 pub mod prompt;
 pub mod youdao;
