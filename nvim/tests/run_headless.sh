@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 
 SPECS=(
   spec_skeleton.lua
+  spec_card.lua
 )
 
 for spec in "${SPECS[@]}"; do
