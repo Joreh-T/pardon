@@ -1,8 +1,8 @@
 //! TTS：有道 dictvoice 下载 + mp3 本地缓存 + espeak-ng 离线兜底。
 //!
 //! 朗读流程（`Tts::speak`）：
-//! 1. 命中缓存（`sha1(voice|text).mp3`）→ 直接播放；
-//! 2. 未命中 → 下载 dictvoice mp3（5s 超时）→ 写缓存 → 播放；
+//! 1. 命中缓存（`sha1(voice|text).mp3`；0 字节视为未命中）→ 直接播放；
+//! 2. 未命中 → 下载 dictvoice mp3（5s 超时）→ 原子写缓存（tmp+rename）→ 播放；
 //! 3. 下载失败 → 把原文 UTF-8 字节交给播放链，
 //!    合成型播放器（espeak-ng）朗读文本，非合成播放器（rodio）解码失败跳过。
 
@@ -165,8 +165,9 @@ impl Tts {
         };
         let path = self.cache_path(text, voice);
         let audio = match std::fs::read(&path) {
-            Ok(cached) => cached,
-            Err(_) => match self.download(&youdao_voice_url(text, voice)).await {
+            // 0 字节视为未命中（崩溃/写满残留），走下载重试
+            Ok(cached) if !cached.is_empty() => cached,
+            _ => match self.download(&youdao_voice_url(text, voice)).await {
                 Ok(bytes) => {
                     // 缓存写失败不阻断播放
                     let _ = self.write_cache(&path, &bytes);
@@ -189,10 +190,13 @@ impl Tts {
         Ok(bytes.to_vec())
     }
 
-    /// 写缓存（含建目录）。
+    /// 原子写缓存（含建目录）：先写 `.tmp` 再 rename，失败时不会留下
+    /// 截断/0 字节的最终文件，下次朗读会重试下载。
     fn write_cache(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.cache_dir)?;
-        std::fs::write(path, bytes)
+        let tmp = path.with_extension("mp3.tmp");
+        std::fs::write(&tmp, bytes)?;
+        std::fs::rename(&tmp, path)
     }
 
     /// 依次尝试播放链，首个 Ok 即返回；全部失败报最后一个错误。
@@ -369,6 +373,29 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].as_slice(), b"UK_MP3".as_slice(), "En 应取 Uk 缓存");
         assert_eq!(calls[1].as_slice(), b"ZH_MP3".as_slice(), "Zh 应取 Zh 缓存");
+    }
+
+    #[tokio::test]
+    async fn zero_byte_cache_file_is_miss_and_retries_download() {
+        // 预写 0 字节缓存文件；http 指向不可达地址 → 应视为 miss 走下载（失败）→ 文本兜底
+        let dir = tempfile::tempdir().unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let tts = unreachable_tts(
+            dir.path().to_path_buf(),
+            vec![Box::new(RecordingPlayer(calls.clone()))],
+        );
+        let path = tts.cache_path("hello", Voice::Uk);
+        std::fs::write(&path, b"").unwrap();
+
+        let res = tts.speak("hello", Lang::En).await;
+
+        assert!(res.is_ok(), "文本兜底应成功");
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            calls[0].as_slice(),
+            b"hello".as_slice(),
+            "0 字节缓存应视为 miss，player 收到原文而非空字节"
+        );
     }
 
     #[test]
