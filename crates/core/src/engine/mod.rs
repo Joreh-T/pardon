@@ -1,3 +1,5 @@
+pub mod prompt;
+
 use crate::lang::Lang;
 
 pub struct TranslateRequest {
