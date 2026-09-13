@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Mock pardon CLI reproducing the Task 18/19 contract output for nvim tests.
+#   lookup <word> --json  → exit 0, single-line WordCard JSON (byte-identical
+#                           to crates/cli/tests/golden/lookup_run.json);
+#                           unknown-but-close word → exit 1 with suggestions.
+#   translate --stream    → exit 0, JSONL: meta / delta x2 / result.
+#   anything else         → exit 2 (real CLI also exits 2 for clap usage
+#                           errors, with non-JSON stderr — never parse it).
+
+# Consume stdin when asked, so a --stdin writer never hits EPIPE.
+for arg in "$@"; do
+  if [[ "$arg" == "--stdin" ]]; then
+    cat > /dev/null
+  fi
+done
+
+case "$1" in
+  lookup)
+    case "$2" in
+      helo)
+        cat <<'EOF'
+{"found":false,"word":"helo","oxford":false,"source":"ecdict","suggestions":["hello"]}
+EOF
+        exit 1
+        ;;
+      *)
+        cat <<'EOF'
+{"found":true,"word":"run","phonetic":{"uk":"rʌn"},"pos":[{"pos":"n.","gloss":["跑步"]},{"pos":"v.","gloss":["跑","运转"]}],"definition":["move fast","operate"],"exchange":{"past":"ran","pp":"run","ing":"running","third":"runs","lemma":"run"},"collins":3,"oxford":true,"tags":["zk","gk","cet4"],"source":"ecdict"}
+EOF
+        ;;
+    esac
+    ;;
+  translate)
+    echo '{"type":"meta","source":"en","target":"zh","engine":"mock"}'
+    echo '{"type":"delta","text":"跑"}'
+    echo '{"type":"delta","text":"步"}'
+    echo '{"type":"result","source":"en","target":"zh","engine":"mock","text":"run","translation":"跑步"}'
+    ;;
+  *) exit 2 ;;
+esac
