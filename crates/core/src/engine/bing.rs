@@ -13,8 +13,8 @@ use regex::Regex;
 
 /// Experimental：token 抓取依赖页面结构（`IG` / `data-iid`），
 /// Bing 改版可能随时失效（spec §9 风险 2），仅作 fallback 链中的实验性引擎。
-/// 2026-09 真网冒烟：token 抓取仍可用，但 `ttranslatev3` 返回体已不再符合
-/// `[{"translations":[…]}]` 形状（解码失败）——接口可能已变更，勿作主力引擎。
+/// 2026-09 真网复核：`ttranslatev3` 已返回 401 captcha，上游免费端点确认
+/// 失效；引擎保留作请求契约与未来官方签名 API 适配的基础，勿作主力引擎。
 pub struct BingEngine {
     http: reqwest::Client,
     base: String,

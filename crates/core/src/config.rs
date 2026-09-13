@@ -118,7 +118,9 @@ pub fn write_default(path: &Path) -> anyhow::Result<()> {
 const DEFAULT_CONFIG_TOML: &str = r#"# pardon 配置文件
 # 路径：~/.config/pardon/config.toml（可用 PARDON_CONFIG 环境变量覆盖）
 #
-# 默认引擎：llm | youdao | bing。缺省 youdao，开箱即用。
+# 默认引擎：llm | youdao | bing。注意：有道/Bing 的免费 web 端点已于
+# 2026-09 失效，句子翻译需配置 LLM provider（见下方示例）；
+# 查词（离线词典）与发音不受影响。
 default_engine = "youdao"
 
 [llm]

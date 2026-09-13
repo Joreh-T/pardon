@@ -2,6 +2,9 @@
 //! 无需鉴权。响应形如
 //! `{"translateResult":[[{"src":"hello","tgt":"你好"}], …]}`，
 //! 所有 `tgt` 按序直接拼接（无分隔符）作为译文。
+//!
+//! 上游免费端点已于 2026-09 失效（`/translate` 退役，302 跳错误页）；
+//! 引擎保留作请求契约与未来官方签名 API 适配的基础。
 
 use super::{Engine, EngineError, TranslateRequest};
 use crate::lang::Lang;

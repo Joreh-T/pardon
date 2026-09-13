@@ -37,8 +37,9 @@ $ pardon lookup 你好 --json
 
 ### 3. 翻译
 
-单词自动走离线词典路由（不联网）；句子走引擎链。默认引擎为有道
-（免配置），配置 LLM 后可作为首选引擎：
+单词自动走离线词典路由（不联网）；句子走引擎链。注意：web 引擎
+（有道/Bing）的免费端点已于 2026-09 失效，句子翻译需配置 LLM
+provider（示例见下方[配置](#配置)节）；查词（离线词典）与发音不受影响。
 
 ```bash
 $ echo "The quick brown fox jumps over the lazy dog." | pardon translate --stdin --stream
@@ -81,7 +82,7 @@ OpenAI 兼容端点（以 DeepSeek 为例）、Anthropic、本地 Ollama）。�
 走环境变量（`api_key_env`），不要把明文 key 写进配置文件：
 
 ```toml
-default_engine = "llm"           # llm | youdao | bing（默认 youdao 开箱即用）
+default_engine = "llm"           # llm | youdao | bing（youdao/bing 免费端点已失效，句子翻译建议 llm）
 
 [llm]
 default_provider = "deepseek"
@@ -121,7 +122,8 @@ model = "qwen2.5:7b"
 - 每个 provider 的 `base_url`、`model` 必填；`id` 唯一。
 - `type = "ollama"` 无需密钥；其余类型需要 `api_key_env`（或
   `api_key`，明文写进配置文件需自担风险，优先级高于环境变量）。
-- `default_engine = "youdao" | "bing"` 时不需要任何配置即可翻译。
+- `default_engine = "youdao" | "bing"` 时不需要任何配置，但其免费端点
+  已于 2026-09 失效（见上文[翻译](#3-翻译)节），句子翻译建议配置 LLM。
 
 ### 自定义提示词
 
@@ -151,8 +153,8 @@ user_prompt_template = "把这句{source}翻成{target}：{text}"
 
 nvim 插件随本仓库发布（`nvim/` 目录）：`:Pardon` 查光标下的词、
 `:PardonTranslate` 翻译选区或光标词，词卡与译文在浮动窗口展示（翻译支
-持流式渲染），`<Plug>` 键位由用户自行映射。安装与配置说明见 `nvim/`
-（整理中，随插件一并发布）。
+持流式渲染），`<Plug>` 键位由用户自行映射。安装与配置说明见
+[nvim/README.md](nvim/README.md)。
 
 ## License
 
