@@ -2,6 +2,7 @@ pub mod config;
 pub mod dict;
 pub mod engine;
 pub mod lang;
+pub mod pipeline;
 pub mod router;
 pub mod tts;
 

@@ -43,10 +43,17 @@ impl EcdictDb {
         super::ecdict::import::import_csv(reader, &conn)?;
         Ok(Self { conn })
     }
+    /// 空内存库（词典缺失时的降级）：建 schema 不导数据，lookup 永远 miss，
+    /// CLI 仍可用引擎链翻译。
+    pub fn empty() -> anyhow::Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        super::ecdict::import::create_schema(&conn)?;
+        Ok(Self { conn })
+    }
     fn query_word(&self, w: &str) -> Option<WordCard> {
         self.conn.query_row(
             &format!("SELECT {CARD_COLS} FROM entries WHERE word = ?1 COLLATE NOCASE"),
-            [w], |r| card_from_row(r)).ok()
+            [w], card_from_row).ok()
     }
 }
 

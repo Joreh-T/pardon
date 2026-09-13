@@ -145,6 +145,13 @@ impl CedictDb {
             conn: Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?,
         })
     }
+
+    /// 空内存库（词典缺失时的降级）：建 schema 不导数据，lookup 永远 miss。
+    pub fn empty() -> anyhow::Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(Self::SCHEMA)?;
+        Ok(Self { conn })
+    }
 }
 
 impl DictProvider for CedictDb {
