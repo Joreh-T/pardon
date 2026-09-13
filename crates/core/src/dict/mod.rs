@@ -1,3 +1,4 @@
+pub mod cedict;
 pub mod ecdict;
 pub mod ecdict_query;
 
