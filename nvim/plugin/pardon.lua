@@ -25,18 +25,29 @@ for name, link in pairs({
   vim.api.nvim_set_hl(0, name, { default = true, link = link })
 end
 
--- Text of the active visual selection (marks v .. .), charwise-precise.
-local function visual_text()
+-- Text and geometry of the active visual selection (marks v .. .),
+-- charwise-precise. The geometry uses 0-based rows/cols, end col exclusive
+-- (|nvim_buf_set_text()| convention), so replace/append modes can act on the
+-- exact selection.
+local function visual_selection()
   local s, e = vim.fn.getpos('v'), vim.fn.getpos('.')
   local srow, scol, erow, ecol = s[2], s[3], e[2], e[3]
   if srow > erow or (srow == erow and scol > ecol) then
     srow, erow, scol, ecol = erow, srow, ecol, scol
   end
   -- nvim_buf_get_text: 0-based rows/cols, end col exclusive.
-  return table.concat(
+  local text = table.concat(
     vim.api.nvim_buf_get_text(0, srow - 1, scol - 1, erow - 1, ecol, {}),
     '\n'
   )
+  local ctx = {
+    bufnr = 0,
+    start_row = srow - 1,
+    start_col = scol - 1,
+    end_row = erow - 1,
+    end_col = ecol,
+  }
+  return text, ctx
 end
 
 vim.api.nvim_create_user_command('Pardon', function()
@@ -45,18 +56,31 @@ end, { desc = 'pardon: lookup the word under the cursor' })
 
 vim.api.nvim_create_user_command('PardonTranslate', function(o)
   p.range_translate(o)
-end, { range = true, desc = 'pardon: translate range or cursor word' })
+end, {
+  range = true,
+  nargs = '?',
+  complete = function()
+    return { 'float', 'replace', 'append', 'register' }
+  end,
+  desc = 'pardon: translate range or cursor word [mode=float|replace|append|register]',
+})
 
 -- <Plug> mappings; no default keys are set. Both the canonical
 -- "<Plug>(Name)" spelling and the bare "<Plug>Name" alias from the task doc
 -- are registered, in normal and visual mode.
 local lookup = {
   n = function() p.cursor_lookup() end,
-  x = function() p.cursor_lookup(vim.fn.trim(visual_text())) end,
+  x = function()
+    local text = visual_selection()
+    p.cursor_lookup(vim.fn.trim(text))
+  end,
 }
 local translate = {
   n = function() p.range_translate({}) end,
-  x = function() p.range_translate({ text = visual_text(), visual = true }) end,
+  x = function()
+    local text, ctx = visual_selection()
+    p.range_translate({ text = text, visual = true, ctx = ctx })
+  end,
 }
 for _, plug in ipairs({ 'PardonLookup', 'PardonTranslate' }) do
   local rhs = plug == 'PardonLookup' and lookup or translate
