@@ -1,0 +1,16 @@
+[package]
+name = "pardon-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pardon"
+path = "src/main.rs"
+
+[dependencies]
+pardon-core.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
