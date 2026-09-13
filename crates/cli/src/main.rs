@@ -19,10 +19,10 @@ struct TranslateArgs {
     /// Read the full text from standard input (used when no TEXT given)
     #[arg(long)]
     stdin: bool,
-    /// Source language: auto | en | zh (auto = detect from text)
+    /// Source language: auto | en | zh (auto = detect from text) (only effective with an explicit --engine; with --engine auto the direction is auto-detected)
     #[arg(long, default_value = "auto")]
     source: String,
-    /// Target language: auto | en | zh (auto = reverse of source)
+    /// Target language: auto | en | zh (auto = detected from text) (only effective with an explicit --engine; with --engine auto the direction is auto-detected)
     #[arg(long, default_value = "auto")]
     target: String,
     /// Engine: auto | llm | youdao | bing (single engine gets no fallback)

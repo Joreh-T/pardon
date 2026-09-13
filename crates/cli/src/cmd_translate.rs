@@ -196,6 +196,10 @@ fn collect_text(args: &TranslateArgs) -> anyhow::Result<String> {
 }
 
 /// 方向解析：auto → `lang::direction(text)`；显式 en/zh → 覆盖（其他值报错）。
+/// 注意：显式 source/target 仅在单引擎模式（`--engine llm|youdao|bing`）下
+/// 实际生效——请求的 from/to 由此构造；`--engine auto` 时 pipeline 内部
+/// 自行检测方向，显式值只体现在 Meta 事件中（Result 事件携带 pipeline
+/// 实际使用的方向）。
 fn resolve_langs(source: &str, target: &str, text: &str) -> anyhow::Result<(Lang, Lang)> {
     let (auto_from, auto_to) = lang::direction(text);
     let from = if source == "auto" { auto_from } else { parse_lang(source)? };
