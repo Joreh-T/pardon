@@ -15,6 +15,15 @@ fn parse_skips_comments_and_blank() {
 }
 
 #[test]
+fn parse_real_cedict_format_with_brackets() {
+    let (simp, _trad, py, glosses) =
+        parse_line("中國 中国 [Zhong1 guo2] /China/Middle Kingdom/").unwrap();
+    assert_eq!(simp, "中国");
+    assert_eq!(py, "Zhong1 guo2");
+    assert_eq!(glosses, vec!["China", "Middle Kingdom"]);
+}
+
+#[test]
 fn pinyin_tone_marks() {
     assert_eq!(pinyin_display("ni3 hao3"), "nǐ hǎo");
     assert_eq!(pinyin_display("Zhong1 guo2"), "Zhōng guó");

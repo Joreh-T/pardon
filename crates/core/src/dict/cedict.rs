@@ -69,15 +69,16 @@ fn is_syllable_token(t: &str) -> bool {
     }
 }
 
-/// 解析一行 CEDICT：`繁體 简体 pin1 yin1 gloss1/gloss2`；`#` 开头为注释。
-/// 拼音是空格分隔的带调音节，第一个非音节 token 起为释义段。
-/// （真实 CEDICT 释义包在 `/…/` 里：开头的 `/` 使该 token 不匹配音节，
-/// split('/') 后空段被滤掉，同样兼容。）
+/// 解析一行 CEDICT：`繁體 简体 [pin1 yin1] /gloss1/gloss2/`；`#` 开头为注释。
+/// 真实 CEDICT 的拼音包在 `[ ]` 里（解析前剥掉）、释义包在 `/…/` 里：
+/// 开头的 `/` 使该 token 不匹配音节，split('/') 后空段被滤掉。
+/// 去括号的简写格式 `繁體 简体 pin1 yin1 gloss1/gloss2` 同样兼容。
 pub fn parse_line(line: &str) -> Option<(String /*simp*/, String /*trad*/, String /*pinyin数字*/, Vec<String> /*glosses*/)> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
         return None;
     }
+    let line = line.replace(['[', ']'], "");
     let mut tokens = line.split_whitespace();
     let trad = tokens.next()?;
     let simp = tokens.next()?;
