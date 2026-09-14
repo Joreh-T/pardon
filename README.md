@@ -156,6 +156,69 @@ nvim 插件随本仓库发布（`nvim/` 目录）：`:Pardon` 查光标下的词
 持流式渲染），`<Plug>` 键位由用户自行映射。安装与配置说明见
 [nvim/README.md](nvim/README.md)。
 
+## M2 — 复制即翻译（pardond）
+
+常驻 daemon 监听剪贴板，复制即翻译并弹桌面通知；niri/WM 快捷键经
+`pardon trigger` 唤起。`pardon lookup/translate/speak` 不依赖 daemon（内嵌直查）。
+
+### 运行（推荐：systemd user service）
+
+    cargo install --path crates/daemon --bin pardond   # 或与 pardon 一起安装
+    mkdir -p ~/.config/systemd/user
+    cp dist/systemd/pardon.service ~/.config/systemd/user/
+    systemctl --user daemon-reload && systemctl --user enable --now pardon
+
+无 systemd 场景：`pardon daemon start`（日志 `~/.local/share/pardon/log/pardond.log`）/ `pardon daemon stop`。
+
+依赖：`wl-clipboard`（wl-paste/wl-copy，剪贴板监听与读写）；通知服务（mako/dunst）。
+缺失时 daemon 自动降级为纯 HTTP 触发口模式（`pardon status` 可见）。
+
+### niri 快捷键
+
+```kdl
+binds {
+    Mod+T { spawn "pardon" "trigger" "selection"; }
+    Mod+Shift+T { spawn "pardon" "trigger" "clipboard"; }
+}
+```
+
+（GNOME 等桌面：系统设置 → 自定义快捷键 → 命令 `pardon trigger selection`。）
+
+### HTTP 触发口（localhost only）
+
+    curl -s http://127.0.0.1:7377/status
+    curl -s -X POST http://127.0.0.1:7377/translate -H 'content-type: application/json' -d '{"text":"hello world"}'
+    curl -s http://127.0.0.1:7377/trigger/selection
+
+JSON 说明：响应中的可选项在缺省时直接省略键（如 trigger 响应未产生译文时
+没有 `translation` 键），而非输出显式 `null`——消费方应把缺失键当作 `null`。
+
+安全说明：只绑定回环地址、无鉴权——本地任意进程都可触发/关停（用户级信任域，
+与剪贴板本身同权限级）。改端口见下方配置。
+
+### [daemon] 配置（~/.config/pardon/config.toml，均可省略）
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| http_bind | "127.0.0.1:7377" | HTTP 触发口（仅回环地址；PARDON_HTTP_BIND 环境变量可覆盖） |
+| auto_translate | true | 复制即翻译总开关 |
+| max_text_bytes | 5120 | 自动翻译文本上限（字节），超过忽略 |
+| dedup_window_ms | 10000 | 同内容去重时间窗（防回环） |
+| copy_translation | false | 译文自动写回剪贴板（写回前登记防回环，不会 ping-pong） |
+| notify_timeout_ms | 5000 | 通知显示时长 |
+
+### 手动测试矩阵（Niri + mako/dunst）
+
+1. 启动后复制一个英文单词（如 `run`）→ 通知显示词卡（词性+释义）
+2. 复制整句 → 通知显示 LLM 译文（需配置 LLM provider，见上文引擎章节）
+3. 立即再复制同样内容 → 无第二条通知（去重）
+4. 开 `copy_translation = true` 后复制整句 → 剪贴板内容变为译文，可直接粘贴；
+   且不会触发反向翻译（防回环）
+5. `Mod+T` 选中一段文字按快捷键 → 通知弹出
+6. 复制一张图片 → 无事件（非文本过滤）；随后复制文本 → 正常
+7. `systemctl --user restart niri`（合成器重启）→ daemon 自动恢复监听（断线重连）
+8. `pardon status` / `pardon daemon stop`
+
 ## License
 
 MIT

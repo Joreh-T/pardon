@@ -1,0 +1,13 @@
+[Unit]
+Description=pardon daemon (clipboard translation)
+# Wayland 合成器就绪后再启动（niri 会把 WAYLAND_DISPLAY 导入 user 会话环境）
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.cargo/bin/pardond
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
