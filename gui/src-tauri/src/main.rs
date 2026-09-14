@@ -151,28 +151,33 @@ fn gui_config_path() -> std::path::PathBuf {
 }
 
 /// 读配置文本 → 脱敏 JSON（供 [`read_config`] 与测试共用）。
-/// 脱敏：`llm.providers[]` 只保留 id/type/base_url/model + `has_api_key`
-/// 存在性标志——**api_key/api_key_env 与模板正文绝不出现在输出**。
+/// 脱敏：`llm.providers` 为数组时逐项只保留 id/type/base_url/model +
+/// `has_api_key` 存在性标志；**非数组形状（表形 `[llm.providers.x]` 等）
+/// 整节点置换为空数组**（core 会拒绝该形状，GUI 显示「无 providers」是
+/// 正确降级）——比逐值过滤更严，key 材料不可能借非数组形状透出。
+/// **api_key/api_key_env 与模板正文绝不出现在输出**。
 /// 文件不存在/解析失败视同空配置（设置页展示默认值，不报错）。
 fn parse_sanitized_config(text: &str) -> Result<serde_json::Value, String> {
     let mut v: serde_json::Value = toml::from_str(text).unwrap_or(serde_json::json!({}));
-    if let Some(providers) = v
-        .get_mut("llm")
-        .and_then(|l| l.get_mut("providers"))
-        .and_then(|p| p.as_array_mut())
-    {
-        for p in providers.iter_mut() {
-            let obj = p.as_object_mut().ok_or("provider not an object")?;
-            let has_key = obj.get("api_key").is_some() || obj.get("api_key_env").is_some();
-            let mut filtered = serde_json::Map::new();
-            for (k, val) in obj.iter() {
-                if matches!(k.as_str(), "id" | "type" | "base_url" | "model") {
-                    filtered.insert(k.clone(), val.clone());
+    match v.get_mut("llm").and_then(|l| l.get_mut("providers")) {
+        Some(p) if p.is_array() => {
+            for p in p.as_array_mut().expect("guarded is_array").iter_mut() {
+                let obj = p.as_object_mut().ok_or("provider not an object")?;
+                let has_key = obj.get("api_key").is_some() || obj.get("api_key_env").is_some();
+                let mut filtered = serde_json::Map::new();
+                for (k, val) in obj.iter() {
+                    if matches!(k.as_str(), "id" | "type" | "base_url" | "model") {
+                        filtered.insert(k.clone(), val.clone());
+                    }
                 }
+                filtered.insert("has_api_key".into(), serde_json::json!(has_key));
+                *obj = filtered;
             }
-            filtered.insert("has_api_key".into(), serde_json::json!(has_key));
-            *obj = filtered;
         }
+        // 非数组（表形/字符串/…）：core 拒绝这种配置；整节点清空兜底，
+        // 不存在任何逐值漏过的可能
+        Some(p) => *p = serde_json::json!([]),
+        None => {}
     }
     Ok(v)
 }
@@ -463,6 +468,33 @@ model = "m"
     fn sanitized_config_rejects_non_object_provider() {
         let v = parse_sanitized_config("[llm]\nproviders = [1]\n");
         assert!(v.is_err());
+    }
+
+    /// 表形 providers（`[llm.providers.glm]`）绝不能让 key 材料透出：
+    /// 整节点置换为空数组（core 会拒绝该形状，GUI 显示「无 providers」）。
+    #[test]
+    fn sanitized_config_neutralizes_table_shaped_providers() {
+        let text = r#"
+[llm]
+default_provider = "glm"
+
+[llm.providers.glm]
+id = "glm"
+type = "openai"
+base_url = "https://api.example.invalid/v1"
+model = "glm-4.7"
+api_key = "sk-table-secret"
+api_key_env = "PARDON_TABLE_KEY"
+"#;
+        let v = parse_sanitized_config(text).unwrap();
+        assert_eq!(v["llm"]["providers"], serde_json::json!([]));
+        let s = v.to_string();
+        assert!(!s.contains("sk-table-secret"));
+        assert!(!s.contains("PARDON_TABLE_KEY"));
+        assert!(!s.contains("\"api_key\""));
+        assert!(!s.contains("\"api_key_env\""));
+        // llm 表其余键不受影响
+        assert_eq!(v["llm"]["default_provider"], "glm");
     }
 
     #[test]
