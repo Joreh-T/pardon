@@ -77,28 +77,55 @@ mod tests {
         assert!(!s.clipboard_watching.load(Ordering::Relaxed));
     }
 
-    /// 永不供帧的假 monitor：启用路径只验证启动语义，不依赖 wl-paste。
-    struct PendingMonitor;
+    /// Drop 探针假 monitor：next_event 永久挂起；被 drop 时置位探针
+    /// （桥任务退出 = monitor 被drop = wl-paste 子进程被 kill_on_drop 收掉）。
+    struct ProbeMonitor {
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl Drop for ProbeMonitor {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::Relaxed);
+        }
+    }
     #[async_trait::async_trait]
-    impl pardon_platform::ClipboardMonitor for PendingMonitor {
+    impl pardon_platform::ClipboardMonitor for ProbeMonitor {
         async fn next_event(&mut self) -> anyhow::Result<String> {
             std::future::pending().await
         }
     }
 
     #[tokio::test]
-    async fn enable_starts_and_disable_stops_consumer() {
+    async fn enable_starts_and_disable_stops_bridge_and_reaps_monitor() {
         let s = bare_state(false).await;
-        // 注入永不供帧的假 monitor：启用 → watching=true；停用 → 消费循环退出
-        super::set_enabled_with_monitor(&s, true, || Ok(Box::new(PendingMonitor)))
-            .await
-            .unwrap();
-        assert!(s.clipboard_watching.load(Ordering::Relaxed));
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let probe = dropped.clone();
+        super::set_enabled_with_monitor(&s, true, move || {
+            Ok(Box::new(ProbeMonitor {
+                dropped: probe.clone(),
+            }))
+        })
+        .await
+        .unwrap();
+        assert!(
+            s.clipboard_watching.load(Ordering::Relaxed),
+            "启用后 watching=true"
+        );
+
+        // 停用走真实路径（send_replace(true) + store(false)）：桥任务 select
+        // 到停止信号 → 退出并 drop monitor（不等下一次剪贴板事件）
         super::set_enabled_with_monitor(&s, false, || unreachable!())
             .await
             .unwrap();
-        // watch 值翻转即触发退出；循环任务是异步的，等一小步
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let reaped = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !dropped.load(Ordering::Relaxed) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(
+            reaped.is_ok(),
+            "1s 内桥任务应退出并 drop monitor（wl-paste 子进程被收）"
+        );
         assert!(!s.clipboard_watching.load(Ordering::Relaxed));
     }
 }

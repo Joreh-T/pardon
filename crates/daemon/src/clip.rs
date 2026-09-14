@@ -22,18 +22,30 @@ pub async fn start_with_backoff(
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     let (tx, mut rx) = mpsc::channel::<String>(64);
 
-    // 桥任务：watcher 断线 → 退避重启（合成器重连、Niri 重启场景自愈）
+    // 桥任务：watcher 断线 → 退避重启（合成器重连、Niri 重启场景自愈）；
+    // 同时 select watcher_stop——停用时立即退出并 drop monitor（其内部
+    // session 的 kill_on_drop 随之收掉 wl-paste 子进程，无需等下一次
+    // 剪贴板事件）。spawn 前订阅，确保停用方的信号翻转必被捕获。
+    let mut bridge_stop = state.watcher_stop.subscribe();
     tokio::spawn(async move {
         loop {
-            match monitor.next_event().await {
-                Ok(text) => {
-                    if tx.send(text).await.is_err() {
-                        break; // 消费端已退出（daemon 关停）
-                    }
+            tokio::select! {
+                changed = bridge_stop.changed() => {
+                    let ended = changed.is_err() || *bridge_stop.borrow();
+                    if ended { break; }
                 }
-                Err(e) => {
-                    log::warn!("clipboard monitor ended: {e:#}; retrying in {backoff:?}");
-                    tokio::time::sleep(backoff).await;
+                ev = monitor.next_event() => {
+                    match ev {
+                        Ok(text) => {
+                            if tx.send(text).await.is_err() {
+                                break; // 消费端已退出（daemon 关停）
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("clipboard monitor ended: {e:#}; retrying in {backoff:?}");
+                            tokio::time::sleep(backoff).await;
+                        }
+                    }
                 }
             }
         }
