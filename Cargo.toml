@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/cli"]
+members = ["crates/core", "crates/cli", "crates/platform"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,6 +9,12 @@ license = "MIT"
 
 [workspace.dependencies]
 pardon-core = { path = "crates/core" }
+pardon-platform = { path = "crates/platform" }
+log = "0.4"
+notify-rust = "4"
+base64 = "0.22"
+axum = "0.8"
+env-logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 csv = "1"

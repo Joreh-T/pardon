@@ -1,0 +1,15 @@
+[package]
+name = "pardon-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+anyhow.workspace = true
+log.workspace = true
+notify-rust.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+tempfile = "3"
