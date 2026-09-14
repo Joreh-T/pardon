@@ -119,10 +119,11 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
     }
 }
 
-/// 通知文案（句子/通用）：摘要 = `pardon · 原文截断`；正文 = 译文
-/// （或失败/未收录提示）。
+/// 通知文案（句子/通用）：摘要 = 原文截断；正文 = 译文
+/// （或失败/未收录提示）。摘要不带前缀——通知标题行只承载内容本身，
+/// 品牌名不与单词/译文混排。
 pub fn format_notification(tr: &Translation, miss_hint: Option<&str>) -> (String, String) {
-    let summary = format!("pardon · {}", truncate_chars(&tr.text, SUMMARY_MAX_CHARS));
+    let summary = truncate_chars(&tr.text, SUMMARY_MAX_CHARS);
     let body = if !tr.translation.is_empty() {
         truncate_chars(&tr.translation, BODY_MAX_CHARS)
     } else if tr.engine.is_empty() {
@@ -133,8 +134,8 @@ pub fn format_notification(tr: &Translation, miss_hint: Option<&str>) -> (String
     (summary, body)
 }
 
-/// 词卡命中通知：摘要 = `pardon · 词 /音标/`（CEDICT 侧为拼音，无音标则
-/// 只有词）；正文 = 词性释义行 + 词形变化行。
+/// 词卡命中通知（词典风格分层）：标题 = 单词；正文 = 音标行（CEDICT 侧
+/// 为拼音）→ 词性释义行 → 词形变化行。
 pub fn format_word_notification(card: &pardon_core::dict::WordCard) -> (String, String) {
     // 音标优先英式、缺省美式（CEDICT 侧 uk 字段存的是拼音）
     let phonetic = card
@@ -142,20 +143,21 @@ pub fn format_word_notification(card: &pardon_core::dict::WordCard) -> (String, 
         .as_ref()
         .and_then(|p| p.uk.as_deref().or(p.us.as_deref()))
         .filter(|p| !p.is_empty());
-    let summary = match phonetic {
-        Some(p) => format!("pardon · {} /{}/", card.word, p),
-        None => format!("pardon · {}", card.word),
-    };
-    let mut body = pardon_core::pipeline::card_text(card);
-    if let Some(forms) = exchange_line(&card.exchange) {
-        if body.is_empty() {
-            body = forms;
-        } else {
-            body.push('\n');
-            body.push_str(&forms);
-        }
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(p) = phonetic {
+        lines.push(format!("/{p}/"));
     }
-    (summary, truncate_chars(&body, BODY_MAX_CHARS))
+    let text = pardon_core::pipeline::card_text(card);
+    if !text.is_empty() {
+        lines.push(text);
+    }
+    if let Some(forms) = exchange_line(&card.exchange) {
+        lines.push(forms);
+    }
+    (
+        truncate_chars(&card.word, SUMMARY_MAX_CHARS),
+        truncate_chars(&lines.join("\n"), BODY_MAX_CHARS),
+    )
 }
 
 /// 词形变化一行（去重保序、封顶 4 个）：`词形：ran · running · runs`。
@@ -430,13 +432,9 @@ mod tests {
     /// 10. 句子/LLM 结果：summary = `pardon · 原文`，body = 译文（无音标）。
     #[tokio::test]
     async fn format_notification_sentence_has_no_phonetic() {
-        let tr = FakeTranslator::sentence("run", "v. 跑；奔跑", "ecdict");
-        let (summary, body) = format_notification(&tr, None);
-        assert_eq!(summary, "pardon · run");
-        assert_eq!(body, "v. 跑；奔跑");
         let tr = FakeTranslator::sentence("hello world", "你好世界", "glm");
         let (summary, body) = format_notification(&tr, None);
-        assert_eq!(summary, "pardon · hello world");
+        assert_eq!(summary, "hello world");
         assert!(!summary.contains('/'), "LLM 摘要不应有音标: {summary}");
         assert_eq!(body, "你好世界");
     }
@@ -473,7 +471,8 @@ mod tests {
             suggestions: vec![],
         };
         let (summary, body) = format_word_notification(&card);
-        assert_eq!(summary, "pardon · run /rʌn/");
+        assert_eq!(summary, "run");
+        assert!(body.starts_with("/rʌn/\n"), "音标应为正文首行: {body}");
         assert!(body.contains("v. 跑；运转"), "body: {body}");
         assert!(body.contains("词形：ran · running · runs"), "body: {body}");
     }
@@ -495,7 +494,7 @@ mod tests {
             suggestions: vec![],
         };
         let (summary, body) = format_word_notification(&card);
-        assert_eq!(summary, "pardon · gave");
+        assert_eq!(summary, "gave");
         assert_eq!(body, "");
     }
 
@@ -536,7 +535,8 @@ mod tests {
         let r = handle_text(&s, "run", Origin::Trigger).await;
         assert!(matches!(r, HandleResult::Handled { .. }));
         let sent = no.sent.lock().unwrap();
-        assert_eq!(sent[0].0, "pardon · run /rʌn/");
+        assert_eq!(sent[0].0, "run");
+        assert!(sent[0].1.starts_with("/rʌn/"), "body: {}", sent[0].1);
         assert!(sent[0].1.contains("v. 跑"), "body: {}", sent[0].1);
     }
 }
