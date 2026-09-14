@@ -225,7 +225,9 @@ fn set_config_value(
     value: serde_json::Value,
 ) -> Result<(), String> {
     if !WRITABLE.iter().any(|(k, t)| *k == key && *t == table) {
-        return Err(format!("refusing to set {key:?} in {table:?}: not writable from gui"));
+        return Err(format!(
+            "refusing to set {key:?} in {table:?}: not writable from gui"
+        ));
     }
     // 读不到（含文件不存在）→ 空文档起步
     let text = std::fs::read_to_string(path).unwrap_or_default();
@@ -263,11 +265,7 @@ fn set_config_value(
 
 /// 原位写单个值（白名单见 [`WRITABLE`]；`table=None` 为根表）。
 #[tauri::command]
-fn config_set(
-    table: Option<String>,
-    key: String,
-    value: serde_json::Value,
-) -> Result<(), String> {
+fn config_set(table: Option<String>, key: String, value: serde_json::Value) -> Result<(), String> {
     set_config_value(&gui_config_path(), table.as_deref(), &key, value)
 }
 
@@ -275,7 +273,9 @@ fn config_set(
 /// 并检查退出码与 stderr（引擎字段改动生效路径）。
 #[tauri::command]
 async fn restart_daemon() -> Result<(), String> {
-    let _ = std::process::Command::new("pardon").args(["daemon", "stop"]).output();
+    let _ = std::process::Command::new("pardon")
+        .args(["daemon", "stop"])
+        .output();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let out = std::process::Command::new("pardon")
         .args(["daemon", "start"])
@@ -511,11 +511,7 @@ api_key_env = "PARDON_TABLE_KEY"
     fn config_set_preserves_trailing_comment_of_existing_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "[daemon]\nauto_translate = true # 复制即翻译\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "[daemon]\nauto_translate = true # 复制即翻译\n").unwrap();
         set_config_value(&path, Some("daemon"), "auto_translate", false.into()).unwrap();
         let out = std::fs::read_to_string(&path).unwrap();
         assert!(out.contains("false"), "value updated: {out}");
@@ -530,13 +526,7 @@ api_key_env = "PARDON_TABLE_KEY"
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[llm]\n").unwrap();
-        let err = set_config_value(
-            &path,
-            Some("llm"),
-            "api_key",
-            "sk-evil".into(),
-        )
-        .unwrap_err();
+        let err = set_config_value(&path, Some("llm"), "api_key", "sk-evil".into()).unwrap_err();
         assert!(err.contains("not writable"), "{err}");
         // 文件未被触碰
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "[llm]\n");
@@ -576,7 +566,10 @@ api_key_env = "PARDON_TABLE_KEY"
     fn gui_config_path_env_override() {
         let _l = CONFIG_LOCK.lock().unwrap();
         std::env::set_var("PARDON_CONFIG", "/tmp/x-t10.toml");
-        assert_eq!(gui_config_path(), std::path::PathBuf::from("/tmp/x-t10.toml"));
+        assert_eq!(
+            gui_config_path(),
+            std::path::PathBuf::from("/tmp/x-t10.toml")
+        );
         std::env::remove_var("PARDON_CONFIG");
     }
 }

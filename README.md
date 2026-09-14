@@ -207,6 +207,7 @@ JSON 说明：响应中的可选项在缺省时直接省略键（如 trigger 响
 | copy_translation | false | 译文自动写回剪贴板（写回前登记防回环，不会 ping-pong）；翻译进行期间的其他复制会被译文覆盖（防回环只防循环，不防丢失） |
 | notify_timeout_ms | 5000 | 通知显示时长 |
 | show_word_badge | false | 词卡通知显示学习徽章行（柯林斯星级 · 牛津核心 · 考试标签） |
+| popup | false | 翻译结果优先 GUI 弹窗展示（无 GUI 订阅时回退桌面通知，见 [M3](#m3--gui-pardon-gui)） |
 
 ### 手动测试矩阵（Niri + mako/dunst）
 
@@ -219,6 +220,127 @@ JSON 说明：响应中的可选项在缺省时直接省略键（如 trigger 响
 6. 复制一张图片 → 无事件（非文本过滤）；随后复制文本 → 正常
 7. `systemctl --user restart niri`（合成器重启）→ daemon 自动恢复监听（断线重连）
 8. `pardon status` / `pardon daemon stop`
+
+## M3 — GUI（pardon-gui）
+
+Tauri 2 GUI（`gui/` 目录，独立 cargo 项目）：快捷键弹窗、主窗口（查词/翻译/
+历史）、系统托盘、设置界面。GUI 是纯 IPC 客户端——所有翻译/词典/历史数据
+经下方 UDS 协议向 pardond 请求，自身不内嵌翻译逻辑（可替换客户端）。
+
+### 构建与运行
+
+前置系统依赖（Debian/Ubuntu；其余发行版装对应 webkit2gtk-4.1 等价包）：
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev librsvg2-dev libssl-dev
+```
+
+构建安装：
+
+```bash
+cd gui && npm install && npm run build
+cd src-tauri && cargo install --path . --bin pardon-gui   # 或 cargo run 直接调试
+```
+
+运行 `pardon-gui`（加 `--settings` 启动即开设置窗口）。需 pardond 在跑；
+主窗口检测到未连接时会提示并给出「一键启动」按钮。
+
+### 开机自启（niri）
+
+```kdl
+spawn-at-startup "pardon-gui"
+```
+
+不配自启也可用：托盘「打开主窗口/设置」在 GUI 未运行时会拉起
+（`pardon-gui --main` / `--settings`）。
+
+### 弹窗模式（popup）
+
+`[daemon] popup = true`（默认 false，通知模式行为不变；也可在设置界面切换）。
+开启后翻译结果改用 GUI 弹窗展示：词卡带音标/词形，内容高度自适应
+（宽固定 420），Esc 或失焦隐藏；隐藏时的位置记忆在
+`~/.local/share/pardon/gui-state.json`，下次在原位弹出。无 GUI 订阅时自动
+回退桌面通知，GUI 退出/断开即恢复通知——两条通路永不低于 M2 的可用性。
+
+### 翻译历史
+
+```bash
+pardon history                 # 最近 20 条（新→旧，单行人类可读）
+pardon history --limit 5
+pardon history --json          # compact JSON 数组
+pardon history --clear
+```
+
+存储 `~/.local/share/pardon/history.sqlite`（`PARDON_HOME` 可覆盖），上限
+1000 条、超出自动裁剪最旧。CLI translate、daemon 剪贴板/触发翻译、GUI 主窗
+口翻译均记录；`origin` 字段区分来源：`auto`（剪贴板）/ `trigger`（快捷键）/
+`cli` / `gui`。
+
+### UDS IPC 协议（GUI 契约）
+
+套接字路径：`$XDG_RUNTIME_DIR/pardon/ipc.sock`（`PARDON_IPC_SOCK` 可覆盖；
+无 XDG 时兜底 `/tmp/pardon/ipc.sock`）。socket 文件权限 0600，daemon 自建
+的父目录 0700（已存在的目录如 XDG_RUNTIME_DIR 不动）。
+
+帧格式为 JSONL（每行一个 JSON 对象）：
+
+- 请求：`{"id":<i64>,"method":"<str>","params":{…}}`（params 可省略）
+- 应答：`{"id":…,"ok":true,"result":…}` 或 `{"id":…,"ok":false,"error":"…"}`
+- 事件（`subscribe` 后推入同连接）：`{"event":"popup"|"show_window","params":…}`
+
+| 方法 | params | result |
+|------|--------|--------|
+| ping | `{}` | `{"version":"…"}` |
+| status | `{}` | daemon 状态快照（同 HTTP `/status`） |
+| translate | `{"text":"…"}` | Translation（source_lang/target_lang/text/translation/engine） |
+| lookup | `{"word":"…"}` | WordCard 词典卡片（未命中为空卡） |
+| trigger | `{"source":"selection"\|"clipboard"}` | `{"notified":bool,"translation":…?}`（无可翻文本时 `notified:false` + reason） |
+| history | `{"limit":20?}` | HistoryEntry 数组（新→旧） |
+| reload | `{}` | `{"restart_required":bool}`：`[daemon]` 字段热生效；引擎字段（default_engine/`[llm]`）需重启 |
+| subscribe | `{}` | 订阅事件推送（重复 subscribe 会替换旧订阅） |
+
+事件：`popup`（params 含 translation 与可选 card 词卡）；`show_window`
+（params `{"kind":"main"\|"settings"}`，托盘请求开窗）。
+
+注意：协议 JSON 是 GUI 与 daemon 的契约（GUI 有意不依赖 pardon-core crate）；
+改路径规则或帧格式需两侧同步（`crates/core/src/ipc.rs` 与
+`gui/src-tauri/src/ipc.rs` 各自实现同一约定）。
+
+### 系统托盘
+
+托盘随 pardond 启动（无 D-Bus 时自动降级，daemon 其余功能不受影响）。菜单：
+
+- **打开主窗口 / 设置**：GUI 在运行 → 事件聚焦已有窗口；未运行 → 拉起
+  `pardon-gui --main` / `--settings`；
+- **复制即翻译**（勾选）：实时开关剪贴板监听并持久化到 config.toml 的
+  `auto_translate`（重启 daemon 后仍保持）；
+- **退出 pardond**。
+
+### 设置窗口
+
+`pardon-gui --settings`（或主窗口按钮/托盘菜单进入）。可修改 7 个
+`[daemon]` 字段（auto_translate / popup / show_word_badge /
+copy_translation / notify_timeout_ms / max_text_bytes / dedup_window_ms）
+与 `default_engine`。保存即写回 config.toml（toml_edit 原位写，文件里的
+注释原样保留）并触发 daemon reload——`[daemon]` 字段热生效；引擎字段改动
+提示「重启生效」并提供一键重启按钮。LLM providers 只读展示（id/类型/
+model/key 是否已配置）；**api_key / api_key_env 绝不经 GUI 显示或写入**
+（写白名单硬编码，不含任何 key 字段）。
+
+### 验收冒烟（手动清单）
+
+1. `pardond` 正常启动，托盘出现图标；`pardon status` 绿。
+2. `popup = false` 下按触发快捷键（M2 示例为 Mod+T）→ 桌面通知（M2 行为
+   不变）。
+3. 设置界面切 `popup = true` → 触发快捷键 → GUI 弹窗（词卡带音标/词形；
+   Esc/失焦隐藏；位置记忆）。
+4. 主窗口：查 `run` 出词卡 + 译文；查句子出译文；历史列表点击回填再译；
+   daemon 未运行时状态栏提示并可一键启动。
+5. 托盘：主窗口/设置拉起与聚焦；「复制即翻译」勾选即时生效并持久化
+   （重启 daemon 后仍保持）；退出。
+6. `pardon history --limit 5` 与 `--json` 输出正确；`pardon translate hello`
+   后条目出现。
+7. `~/.config/pardon/config.toml` 的注释在 GUI 改动后完好。
 
 ## License
 
