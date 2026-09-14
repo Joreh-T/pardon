@@ -17,6 +17,7 @@ use crate::{ClipboardAccess, ClipboardMonitor};
 use anyhow::{bail, Context};
 use base64::Engine as _;
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -29,15 +30,26 @@ const WATCH_CMD: &str = "base64 -w0; echo";
 /// 亚百毫秒到达；窗口取 300ms 留裕量。窗口内到达的非空帧一律丢弃。
 const INITIAL_FRAME_WINDOW_MS: u64 = 300;
 
-fn find_bin(name: &str) -> anyhow::Result<PathBuf> {
-    let path = std::env::var_os("PATH").context("PATH is not set")?;
-    for dir in std::env::split_paths(&path) {
+/// 在给定目录序列中查找 `name`：必须是带执行位的普通文件（unix 惯例，
+/// 与 shell 的 PATH 搜索一致——无 x 位的同名文件会被跳过而非命中）。
+/// `find_bin` 的可测内核：测试直接喂目录列表，不动进程 PATH。
+fn find_bin_in(dirs: impl IntoIterator<Item = PathBuf>, name: &str) -> Option<PathBuf> {
+    for dir in dirs {
         let p = dir.join(name);
-        if p.is_file() {
-            return Ok(p);
+        let Ok(md) = std::fs::metadata(&p) else {
+            continue;
+        };
+        if md.is_file() && md.permissions().mode() & 0o111 != 0 {
+            return Some(p);
         }
     }
-    bail!("{name} not found in PATH (install the wl-clipboard package)")
+    None
+}
+
+fn find_bin(name: &str) -> anyhow::Result<PathBuf> {
+    let path = std::env::var_os("PATH").context("PATH is not set")?;
+    find_bin_in(std::env::split_paths(&path), name)
+        .with_context(|| format!("{name} not found in PATH (install the wl-clipboard package)"))
 }
 
 /// 事件文本解码：空行跳过（空剪贴板/图片事件被 --type 过滤后的空输出），
@@ -232,6 +244,33 @@ mod tests {
         std::fs::write(&p, format!("#!/bin/sh\n{script}\n")).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         p
+    }
+
+    /// find_bin_in 只认带执行位的普通文件：0644 的 wl-paste 不算命中。
+    #[test]
+    fn find_bin_in_requires_exec_bit() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("wl-paste");
+        std::fs::write(&p, "#!/bin/sh\n:\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(find_bin_in([dir.path().to_path_buf()], "wl-paste"), None);
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(find_bin_in([dir.path().to_path_buf()], "wl-paste"), Some(p));
+    }
+
+    /// find_bin_in 按序扫描：跳过不含目标的目录，命中后面的目录。
+    #[test]
+    fn find_bin_in_scans_dirs_in_order() {
+        let empty = tempfile::tempdir().unwrap();
+        let has = tempfile::tempdir().unwrap();
+        let bin = fake_bin(has.path(), "wl-copy", ":");
+        assert_eq!(
+            find_bin_in(
+                [empty.path().to_path_buf(), has.path().to_path_buf()],
+                "wl-copy"
+            ),
+            Some(bin)
+        );
     }
 
     #[test]

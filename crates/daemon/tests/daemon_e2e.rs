@@ -1,6 +1,6 @@
-//! 真 pardond 进程 e2e：空词典 + 无 Wayland 环境下验证
-//! HTTP 服务、词路由离线 miss、降级 503 与优雅关停。
-//! 全程无外网（词路由不触引擎；默认配置无 LLM provider）。
+//! 真 pardond 进程 e2e：播种单词条（hello）ecdict + 无 Wayland 环境下验证
+//! HTTP 服务、词路由离线可达、降级 503 与优雅关停。
+//! 全程无外网（词路由靠词典命中，不触引擎；默认配置无 LLM provider）。
 
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};

@@ -1,10 +1,19 @@
 //! `pardon status`：pardond 运行状态与计数器。
 
+/// HTTP 超时：状态查询应即时完成。
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub async fn run(addr: std::net::SocketAddr) -> anyhow::Result<i32> {
     let url = format!("http://{addr}/status");
-    match reqwest::get(&url).await {
-        Ok(resp) => {
-            let body = resp.text().await?;
+    // 带超时的 client：连接/读超时等一切传输错误都视为「未运行」
+    let client = reqwest::Client::builder().timeout(STATUS_TIMEOUT).build()?;
+    let fetched = async {
+        let resp = client.get(&url).send().await?;
+        resp.text().await
+    }
+    .await;
+    match fetched {
+        Ok(body) => {
             // pretty 输出（已是 JSON）；解析失败则原样打印
             match serde_json::from_str::<serde_json::Value>(&body) {
                 Ok(v) => println!("{}", serde_json::to_string_pretty(&v)?),

@@ -52,7 +52,12 @@ pub async fn run(action: &str, addr: std::net::SocketAddr) -> anyhow::Result<i32
         }
         "stop" => {
             let url = format!("http://{addr}/shutdown");
-            match reqwest::Client::new().post(&url).send().await {
+            // 带超时的 client（与 status 一致）：连接/读超时等一切传输错误
+            // 都视为「未运行」，不再无限挂起
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()?;
+            match client.post(&url).send().await {
                 Ok(_) => {
                     println!("pardond stopped");
                     Ok(0)

@@ -4,6 +4,7 @@
 use crate::state::DaemonState;
 use pardon_core::pipeline::Translation;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 /// 事件来源：Auto = 剪贴板监听（防回环+长度上限生效）；
 /// Trigger = 显式触发（快捷键/HTTP，全部绕过，用户意图明确）。
@@ -77,16 +78,21 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
     };
 
     let (summary, body) = format_notification(&translation, miss_hint.as_deref());
-    let notified = state
-        .notifier
-        .notify(&summary, &body)
+    // notify 是同步 D-Bus 往返（notify-rust 超时可至 ~25s）→ 挪到 blocking
+    // 线程，避免卡住 runtime worker 与串行剪贴板消费循环（join 失败视同
+    // notify 失败，语义同 http.rs 触发口读剪贴板）。
+    let notifier = Arc::clone(&state.notifier);
+    let notified = tokio::task::spawn_blocking(move || notifier.notify(&summary, &body))
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!("notify task failed: {e}")))
         .inspect_err(|e| log::warn!("notify failed: {e:#}"))
         .is_ok();
     if notified {
         state.counters.notifications.fetch_add(1, Ordering::Relaxed);
     }
 
-    // 译文写回剪贴板：先登记（防回环），再写入
+    // 译文写回剪贴板：先登记（防回环），再写入（write_clipboard 会 spawn
+    // 子进程并等待，同样走 blocking 线程）
     if state.cfg.daemon.copy_translation && !translation.translation.is_empty() {
         let now = std::time::Instant::now();
         state
@@ -94,7 +100,12 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
             .lock()
             .await
             .register_write(&translation.translation, now);
-        if let Err(e) = state.clipboard.write_clipboard(&translation.translation) {
+        let clipboard = Arc::clone(&state.clipboard);
+        let text = translation.translation.clone();
+        let write = tokio::task::spawn_blocking(move || clipboard.write_clipboard(&text))
+            .await
+            .unwrap_or_else(|e| Err(anyhow::anyhow!("clipboard write task failed: {e}")));
+        if let Err(e) = write {
             log::warn!("copy translation back failed: {e:#}");
         }
     }

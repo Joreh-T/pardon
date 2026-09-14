@@ -1,6 +1,7 @@
 [Unit]
 Description=pardon daemon (clipboard translation)
-# Wayland 合成器就绪后再启动（niri 会把 WAYLAND_DISPLAY 导入 user 会话环境）
+# 仅排序/停止联动（After/PartOf），不是硬门槛：合成器缺席时 daemon 也能
+# 启动——剪贴板监听退避自愈，合成器出现后自动恢复监听。
 After=graphical-session.target
 PartOf=graphical-session.target
 
