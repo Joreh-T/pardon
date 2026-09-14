@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// "llm" | "youdao" | "bing"；缺省 "youdao"（免配置可用）。
+    /// "llm" | "youdao" | "bing"；缺省 "youdao"。
+    /// 注意：有道/Bing 的免费 web 端点已于 2026-09 失效，句子翻译需配置 LLM provider（见 README）。
     #[serde(default = "default_engine_youdao")]
     pub default_engine: String,
     #[serde(default)]
