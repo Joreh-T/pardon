@@ -1,0 +1,26 @@
+[package]
+name = "pardon-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pardond"
+path = "src/main.rs"
+
+[dependencies]
+pardon-core.workspace = true
+pardon-platform.workspace = true
+tokio.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+log.workspace = true
+env_logger.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+tempfile = "3"

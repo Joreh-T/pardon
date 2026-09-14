@@ -1,0 +1,471 @@
+//! 文本处理核心：自动剪贴板事件与显式触发共用
+//! （防回环/长度上限 → 分流翻译 → 通知 → 可选译文写回）。
+
+use crate::state::DaemonState;
+use pardon_core::pipeline::Translation;
+use std::sync::atomic::Ordering;
+
+/// 事件来源：Auto = 剪贴板监听（防回环+长度上限生效）；
+/// Trigger = 显式触发（快捷键/HTTP，全部绕过，用户意图明确）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    Auto,
+    Trigger,
+}
+
+pub enum HandleResult {
+    Handled {
+        translation: Translation,
+        notified: bool,
+    },
+    /// "empty" | "oversize" | "duplicate"
+    Skipped(&'static str),
+}
+
+/// 通知摘要里原文截断长度（字符，CJK 安全）。
+const SUMMARY_MAX_CHARS: usize = 30;
+/// 通知正文最大长度（字符）。
+const BODY_MAX_CHARS: usize = 1200;
+/// 未收录建议最多展示几个。
+const MAX_SUGGESTIONS: usize = 3;
+
+/// 核心处理链：trim → （Auto）长度上限 + 防回环 → 翻译 → 通知 →
+/// （可选）译文写回剪贴板（写回前登记防回环哈希）。
+pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> HandleResult {
+    let text = raw.trim();
+    if text.is_empty() {
+        return HandleResult::Skipped("empty");
+    }
+    if origin == Origin::Auto {
+        if text.len() > state.cfg.daemon.max_text_bytes {
+            log::debug!("skip oversize text ({} bytes)", text.len());
+            return HandleResult::Skipped("oversize");
+        }
+        let now = std::time::Instant::now();
+        if !state.guard.lock().await.admit(text, now) {
+            return HandleResult::Skipped("duplicate");
+        }
+        state
+            .counters
+            .clipboard_events
+            .fetch_add(1, Ordering::Relaxed);
+    } else {
+        state.counters.triggers.fetch_add(1, Ordering::Relaxed);
+    }
+
+    let translation = state.translator.translate(text).await;
+    state.counters.translations.fetch_add(1, Ordering::Relaxed);
+
+    // 词典未收录：取 suggestions 丰富通知（"runnign → 试试 running"）
+    let miss_hint = if translation.translation.is_empty()
+        && (translation.engine == "ecdict" || translation.engine == "cedict")
+    {
+        let card = state.translator.lookup(&translation.text).await;
+        if card.suggestions.is_empty() {
+            None
+        } else {
+            let shown: Vec<String> = card
+                .suggestions
+                .iter()
+                .take(MAX_SUGGESTIONS)
+                .cloned()
+                .collect();
+            Some(format!("未收录；试试：{}", shown.join("、")))
+        }
+    } else {
+        None
+    };
+
+    let (summary, body) = format_notification(&translation, miss_hint.as_deref());
+    let notified = state
+        .notifier
+        .notify(&summary, &body)
+        .inspect_err(|e| log::warn!("notify failed: {e:#}"))
+        .is_ok();
+    if notified {
+        state.counters.notifications.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // 译文写回剪贴板：先登记（防回环），再写入
+    if state.cfg.daemon.copy_translation && !translation.translation.is_empty() {
+        let now = std::time::Instant::now();
+        state
+            .guard
+            .lock()
+            .await
+            .register_write(&translation.translation, now);
+        if let Err(e) = state.clipboard.write_clipboard(&translation.translation) {
+            log::warn!("copy translation back failed: {e:#}");
+        }
+    }
+
+    HandleResult::Handled {
+        translation,
+        notified,
+    }
+}
+
+/// 通知文案：摘要 = `pardon · 原文截断`；正文 = 译文（或失败/未收录提示）。
+pub fn format_notification(tr: &Translation, miss_hint: Option<&str>) -> (String, String) {
+    let summary = format!("pardon · {}", truncate_chars(&tr.text, SUMMARY_MAX_CHARS));
+    let body = if !tr.translation.is_empty() {
+        truncate_chars(&tr.translation, BODY_MAX_CHARS)
+    } else if tr.engine.is_empty() {
+        "翻译失败（引擎链全部失败）".to_string()
+    } else {
+        miss_hint.unwrap_or("未收录").to_string()
+    };
+    (summary, body)
+}
+
+/// 按字符截断（CJK 安全），超长追加省略号。
+pub fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(max).collect();
+        t.push('…');
+        t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{DaemonState, Translator};
+    use pardon_core::config::AppConfig;
+    use pardon_core::dict::WordCard;
+    use pardon_core::pipeline::Translation;
+    use pardon_platform::{ClipboardAccess, Notifier};
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex};
+
+    /// 记录调用的假翻译器：translate 返回预设表（文本→结果），未命中返回
+    /// 标准成功句；lookup 返回预设词卡。
+    struct FakeTranslator {
+        results: Mutex<Vec<(String, Translation)>>,
+        lookup_card: Mutex<WordCard>,
+        delay_ms: u64,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeTranslator {
+        fn new() -> Self {
+            Self {
+                results: Mutex::new(vec![]),
+                lookup_card: Mutex::new(WordCard {
+                    found: false,
+                    word: String::new(),
+                    phonetic: None,
+                    pos: vec![],
+                    definition: vec![],
+                    exchange: None,
+                    collins: None,
+                    oxford: false,
+                    tags: vec![],
+                    source: "ecdict".into(),
+                    suggestions: vec![],
+                }),
+                delay_ms: 0,
+                calls: Mutex::new(vec![]),
+            }
+        }
+        fn sentence_result(text: &str, translation: &str, engine: &str) -> Translation {
+            Translation {
+                source_lang: pardon_core::lang::Lang::En,
+                target_lang: pardon_core::lang::Lang::Zh,
+                text: text.into(),
+                translation: translation.into(),
+                engine: engine.into(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Translator for FakeTranslator {
+        async fn translate(&self, text: &str) -> Translation {
+            if self.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            }
+            self.calls.lock().unwrap().push(text.to_string());
+            let r = self
+                .results
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(t, _)| t == text)
+                .map(|(_, tr)| tr.clone());
+            r.unwrap_or_else(|| Self::sentence_result(text, "（译文）", "glm"))
+        }
+        async fn lookup(&self, word: &str) -> WordCard {
+            let mut c = self.lookup_card.lock().unwrap().clone();
+            c.word = word.to_string();
+            c
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeNotifier {
+        sent: Mutex<Vec<(String, String)>>,
+        fail: bool,
+    }
+    impl Notifier for FakeNotifier {
+        fn notify(&self, summary: &str, body: &str) -> anyhow::Result<()> {
+            if self.fail {
+                anyhow::bail!("no notification daemon");
+            }
+            self.sent
+                .lock()
+                .unwrap()
+                .push((summary.into(), body.into()));
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeClipboard {
+        written: Mutex<Vec<String>>,
+    }
+    impl ClipboardAccess for FakeClipboard {
+        fn read_clipboard(&self) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        fn read_primary(&self) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        fn write_clipboard(&self, text: &str) -> anyhow::Result<()> {
+            self.written.lock().unwrap().push(text.to_string());
+            Ok(())
+        }
+    }
+
+    fn word_card_suggestions(v: &[&str]) -> WordCard {
+        WordCard {
+            found: false,
+            word: String::new(),
+            phonetic: None,
+            pos: vec![],
+            definition: vec![],
+            exchange: None,
+            collins: None,
+            oxford: false,
+            tags: vec![],
+            source: "ecdict".into(),
+            suggestions: v.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// 组装测试 state：默认 AppConfig + 注入的假实现。
+    fn test_state(
+        tr: Arc<FakeTranslator>,
+        no: Arc<FakeNotifier>,
+        cb: Arc<FakeClipboard>,
+        cfg: AppConfig,
+    ) -> DaemonState {
+        use std::time::Duration;
+        DaemonState {
+            guard: tokio::sync::Mutex::new(pardon_core::loopguard::LoopGuard::new(
+                Duration::from_millis(cfg.daemon.dedup_window_ms),
+            )),
+            cfg,
+            started: std::time::Instant::now(),
+            translator: tr,
+            notifier: no,
+            clipboard: cb,
+            counters: Default::default(),
+            clipboard_watching: std::sync::atomic::AtomicBool::new(false),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn base_cfg() -> AppConfig {
+        let mut cfg = AppConfig::default();
+        cfg.daemon.dedup_window_ms = 10_000; // 测试不等待真实过期
+        cfg
+    }
+
+    /// 1. 空白文本（Auto）→ Skipped("empty")，翻译器零调用。
+    #[tokio::test]
+    async fn empty_text_is_skipped() {
+        let ft = Arc::new(FakeTranslator::new());
+        let s = test_state(
+            ft.clone(),
+            Arc::new(FakeNotifier::default()),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        let r = handle_text(&s, "  \n ", Origin::Auto).await;
+        assert!(matches!(r, HandleResult::Skipped("empty")));
+        assert!(ft.calls.lock().unwrap().is_empty());
+    }
+
+    /// 2. 超长文本 Auto → Skipped("oversize")；Trigger 绕过上限 → Handled。
+    #[tokio::test]
+    async fn oversize_auto_skipped_but_trigger_bypasses() {
+        let mut cfg = base_cfg();
+        cfg.daemon.max_text_bytes = 10;
+        let s = test_state(
+            Arc::new(FakeTranslator::new()),
+            Arc::new(FakeNotifier::default()),
+            Arc::new(FakeClipboard::default()),
+            cfg,
+        );
+        let text = "aaaaaaaaaaaaaaaaaaaa"; // 20 bytes > 10
+        let r = handle_text(&s, text, Origin::Auto).await;
+        assert!(matches!(r, HandleResult::Skipped("oversize")));
+        let r = handle_text(&s, text, Origin::Trigger).await;
+        assert!(matches!(r, HandleResult::Handled { .. }));
+    }
+
+    /// 3. 同文本连续两次 Auto：第二次命中去重窗 → Skipped("duplicate")。
+    #[tokio::test]
+    async fn duplicate_auto_event_deduped() {
+        let s = test_state(
+            Arc::new(FakeTranslator::new()),
+            Arc::new(FakeNotifier::default()),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        let first = handle_text(&s, "hello world", Origin::Auto).await;
+        assert!(matches!(first, HandleResult::Handled { .. }));
+        let second = handle_text(&s, "hello world", Origin::Auto).await;
+        assert!(matches!(second, HandleResult::Skipped("duplicate")));
+    }
+
+    /// 4. 词典未收录（engine=ecdict、译文空）→ 通知正文带「试试」建议。
+    #[tokio::test]
+    async fn word_miss_notification_includes_suggestions() {
+        let ft = FakeTranslator::new();
+        ft.results.lock().unwrap().push((
+            "runnign".into(),
+            FakeTranslator::sentence_result("runnign", "", "ecdict"),
+        ));
+        *ft.lookup_card.lock().unwrap() = word_card_suggestions(&["running", "run"]);
+        let no = Arc::new(FakeNotifier::default());
+        let s = test_state(
+            Arc::new(ft),
+            no.clone(),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        let r = handle_text(&s, "runnign", Origin::Auto).await;
+        match r {
+            HandleResult::Handled { .. } => {}
+            HandleResult::Skipped(w) => panic!("expected Handled, got Skipped({w})"),
+        }
+        let sent = no.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let body = &sent[0].1;
+        assert!(body.contains("running"), "body missing suggestion: {body}");
+        assert!(body.contains("试试"), "body missing 试试: {body}");
+    }
+
+    /// 5. 引擎链全失败（译文与引擎皆空）→ 通知正文「翻译失败」。
+    #[tokio::test]
+    async fn sentence_failure_shows_fallback_body() {
+        let ft = FakeTranslator::new();
+        ft.results.lock().unwrap().push((
+            "hello world".into(),
+            FakeTranslator::sentence_result("hello world", "", ""),
+        ));
+        let no = Arc::new(FakeNotifier::default());
+        let s = test_state(
+            Arc::new(ft),
+            no.clone(),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        let r = handle_text(&s, "hello world", Origin::Auto).await;
+        assert!(matches!(r, HandleResult::Handled { .. }));
+        let sent = no.sent.lock().unwrap();
+        assert!(sent[0].1.contains("翻译失败"), "body: {}", sent[0].1);
+    }
+
+    /// 6. 成功翻译 → notified=true，translations/notifications 计数各 1。
+    #[tokio::test]
+    async fn successful_translation_notifies_and_counts() {
+        let s = test_state(
+            Arc::new(FakeTranslator::new()),
+            Arc::new(FakeNotifier::default()),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        let r = handle_text(&s, "hello world", Origin::Auto).await;
+        match r {
+            HandleResult::Handled { notified, .. } => assert!(notified),
+            HandleResult::Skipped(w) => panic!("unexpected Skipped({w})"),
+        }
+        assert_eq!(s.counters.translations.load(Ordering::Relaxed), 1);
+        assert_eq!(s.counters.notifications.load(Ordering::Relaxed), 1);
+    }
+
+    /// 7. 通知失败 → notified=false，但仍 Handled（不视为错误）。
+    #[tokio::test]
+    async fn notify_failure_still_returns_handled() {
+        let s = test_state(
+            Arc::new(FakeTranslator::new()),
+            Arc::new(FakeNotifier {
+                sent: Mutex::new(vec![]),
+                fail: true,
+            }),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        let r = handle_text(&s, "hello world", Origin::Auto).await;
+        match r {
+            HandleResult::Handled { notified, .. } => assert!(!notified),
+            HandleResult::Skipped(w) => panic!("unexpected Skipped({w})"),
+        }
+    }
+
+    /// 8. copy_translation 开 → 译文写回剪贴板；回声译文再触发被防回环拦截。
+    #[tokio::test]
+    async fn copy_translation_writes_back_and_blocks_echo() {
+        let mut cfg = base_cfg();
+        cfg.daemon.copy_translation = true;
+        let ft = FakeTranslator::new();
+        ft.results.lock().unwrap().push((
+            "hello".into(),
+            FakeTranslator::sentence_result("hello", "你好", "glm"),
+        ));
+        let cb = Arc::new(FakeClipboard::default());
+        let s = test_state(
+            Arc::new(ft),
+            Arc::new(FakeNotifier::default()),
+            cb.clone(),
+            cfg,
+        );
+        let r = handle_text(&s, "hello", Origin::Auto).await;
+        match r {
+            HandleResult::Handled {
+                translation,
+                notified,
+            } => {
+                assert!(notified);
+                assert_eq!(translation.translation, "你好");
+            }
+            HandleResult::Skipped(w) => panic!("unexpected Skipped({w})"),
+        }
+        assert_eq!(*cb.written.lock().unwrap(), vec!["你好".to_string()]);
+        // 用户/回声再复制译文 → LoopGuard 拦截
+        let echo = handle_text(&s, "你好", Origin::Auto).await;
+        assert!(matches!(echo, HandleResult::Skipped("duplicate")));
+    }
+
+    /// 9. 按字符截断（CJK 安全）：4 字后加省略号；短串原样返回。
+    #[tokio::test]
+    async fn truncate_chars_cjk_safe() {
+        assert_eq!(truncate_chars("你好世界！！！", 4), "你好世界…");
+        assert_eq!(truncate_chars("abc", 10), "abc");
+        assert_eq!(truncate_chars("", 3), "");
+    }
+
+    /// 10. 词卡结果：summary = `pardon · 原文`，body = 词卡文本。
+    #[tokio::test]
+    async fn format_notification_word_uses_word_summary() {
+        let tr = FakeTranslator::sentence_result("run", "v. 跑；奔跑", "ecdict");
+        let (summary, body) = format_notification(&tr, None);
+        assert_eq!(summary, "pardon · run");
+        assert_eq!(body, "v. 跑；奔跑");
+    }
+}
