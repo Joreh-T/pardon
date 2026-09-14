@@ -5,9 +5,12 @@
 //! `translate` 的超时/引擎错误走 [`output::event_exit`]（code
 //! timeout/engine，exit 124/2）。
 
+mod cmd_daemon;
 mod cmd_lookup;
 mod cmd_speak;
+mod cmd_status;
 mod cmd_translate;
+mod cmd_trigger;
 mod output;
 
 use clap::{Args, Parser, Subcommand};
@@ -72,6 +75,19 @@ enum Cmd {
         #[arg(long)]
         init: bool,
     },
+    /// Trigger a translation via the daemon (for window-manager keybindings)
+    Trigger {
+        /// What to translate: selection (primary selection) or clipboard
+        #[arg(default_value = "selection")]
+        source: String,
+    },
+    /// Show pardond status (running, counters)
+    Status,
+    /// Manage the pardond daemon (start | stop)
+    Daemon {
+        /// start | stop
+        action: String,
+    },
 }
 
 #[tokio::main]
@@ -82,6 +98,9 @@ async fn main() {
         Cmd::Translate(args) => cmd_translate::run(&args).await,
         Cmd::Speak { text, lang } => cmd_speak::run(&text, &lang).await,
         Cmd::Config { init } => run_config(init),
+        Cmd::Trigger { source } => run_trigger(&source).await,
+        Cmd::Status => run_status().await,
+        Cmd::Daemon { action } => run_daemon(&action).await,
     }
     .unwrap_or_else(|e| output::error_exit(e));
     std::process::exit(code);
@@ -104,4 +123,26 @@ fn run_config(init: bool) -> anyhow::Result<i32> {
     }
     println!("{}", path.display());
     Ok(0)
+}
+
+/// `pardon trigger <source>`：读配置定位 pardond，再通知它翻译
+/// selection / clipboard。
+async fn run_trigger(source: &str) -> anyhow::Result<i32> {
+    let cfg = pardon_core::config::load()?;
+    let addr = pardon_core::config::effective_http_bind(&cfg)?;
+    cmd_trigger::run(source, addr).await
+}
+
+/// `pardon status`：读配置定位 pardond，查询其运行状态。
+async fn run_status() -> anyhow::Result<i32> {
+    let cfg = pardon_core::config::load()?;
+    let addr = pardon_core::config::effective_http_bind(&cfg)?;
+    cmd_status::run(addr).await
+}
+
+/// `pardon daemon <action>`：读配置定位 pardond，执行 start | stop。
+async fn run_daemon(action: &str) -> anyhow::Result<i32> {
+    let cfg = pardon_core::config::load()?;
+    let addr = pardon_core::config::effective_http_bind(&cfg)?;
+    cmd_daemon::run(action, addr).await
 }
