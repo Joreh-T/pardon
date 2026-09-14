@@ -4,7 +4,11 @@ use pardon_core::lang::Lang;
 use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
 
 fn req() -> TranslateRequest {
-    TranslateRequest { text: "hello".into(), from: Lang::En, to: Lang::Zh }
+    TranslateRequest {
+        text: "hello".into(),
+        from: Lang::En,
+        to: Lang::Zh,
+    }
 }
 
 /// 含 `IG:"AB12CD"` 与 `data-iid="translator.5023"` 的假 translator 页面。
@@ -18,8 +22,7 @@ async fn translates_with_scraped_tokens() {
     Mock::given(matchers::method("GET"))
         .and(matchers::path("/translator"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(TOKEN_HTML.as_bytes().to_vec(), "text/html"),
+            ResponseTemplate::new(200).set_body_raw(TOKEN_HTML.as_bytes().to_vec(), "text/html"),
         )
         .mount(&server)
         .await;
@@ -52,8 +55,7 @@ async fn wrong_token_params_do_not_match() {
     Mock::given(matchers::method("GET"))
         .and(matchers::path("/translator"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(TOKEN_HTML.as_bytes().to_vec(), "text/html"),
+            ResponseTemplate::new(200).set_body_raw(TOKEN_HTML.as_bytes().to_vec(), "text/html"),
         )
         .mount(&server)
         .await;

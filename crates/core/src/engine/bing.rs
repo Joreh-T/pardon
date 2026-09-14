@@ -51,7 +51,10 @@ impl BingEngine {
 
     /// 直接注入 base（单测用 wiremock mock 服务）。
     pub fn new_with_base(base: String) -> Self {
-        Self { http: reqwest::Client::new(), base }
+        Self {
+            http: reqwest::Client::new(),
+            base,
+        }
     }
 
     /// 目标语言 → ttranslatev3 `to` 参数。
@@ -89,8 +92,12 @@ impl Engine for BingEngine {
             .text()
             .await
             .map_err(|e| EngineError::Network(e.to_string()))?;
-        let token = IG_RE.captures(&html).and_then(|c| c.get(1).map(|m| m.as_str()));
-        let iid = IID_RE.captures(&html).and_then(|c| c.get(1).map(|m| m.as_str()));
+        let token = IG_RE
+            .captures(&html)
+            .and_then(|c| c.get(1).map(|m| m.as_str()));
+        let iid = IID_RE
+            .captures(&html)
+            .and_then(|c| c.get(1).map(|m| m.as_str()));
         let (ig, iid) = match (token, iid) {
             (Some(ig), Some(iid)) => (ig, iid),
             _ => return Err(EngineError::Parse("missing IG/IID token".into())),
@@ -113,8 +120,10 @@ impl Engine for BingEngine {
             .map_err(|e| EngineError::Network(e.to_string()))?
             .error_for_status()
             .map_err(|e| EngineError::Api(e.to_string()))?;
-        let parsed: Vec<BingResponse> =
-            resp.json().await.map_err(|e| EngineError::Parse(e.to_string()))?;
+        let parsed: Vec<BingResponse> = resp
+            .json()
+            .await
+            .map_err(|e| EngineError::Parse(e.to_string()))?;
         parsed
             .into_iter()
             .next()

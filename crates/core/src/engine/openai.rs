@@ -58,7 +58,11 @@ impl OpenAiEngine {
             .with_api_base(cfg.base_url.clone())
             .with_api_key(cfg.api_key.clone());
         let name = Box::leak(cfg.id.clone().into_boxed_str());
-        Self { name, cfg, client: Client::with_config(sdk_cfg) }
+        Self {
+            name,
+            cfg,
+            client: Client::with_config(sdk_cfg),
+        }
     }
 
     /// 引擎实际生效的配置（组装正确性的只读断言用，如 pipeline 测试）。
@@ -66,10 +70,20 @@ impl OpenAiEngine {
         &self.cfg
     }
 
-    fn build_request(&self, req: &TranslateRequest) -> Result<CreateChatCompletionRequest, EngineError> {
-        let system = self.cfg.system_prompt.as_deref().unwrap_or(DEFAULT_SYSTEM_PROMPT);
+    fn build_request(
+        &self,
+        req: &TranslateRequest,
+    ) -> Result<CreateChatCompletionRequest, EngineError> {
+        let system = self
+            .cfg
+            .system_prompt
+            .as_deref()
+            .unwrap_or(DEFAULT_SYSTEM_PROMPT);
         let user = render_user_prompt(
-            self.cfg.user_prompt_template.as_deref().unwrap_or(DEFAULT_USER_TEMPLATE),
+            self.cfg
+                .user_prompt_template
+                .as_deref()
+                .unwrap_or(DEFAULT_USER_TEMPLATE),
             &req.text,
             req.from,
             req.to,
@@ -128,7 +142,12 @@ impl OpenAiEngine {
 
     async fn translate_once(&self, req: &TranslateRequest) -> Result<String, EngineError> {
         let request = self.build_request(req)?;
-        let resp = self.client.chat().create(request).await.map_err(map_openai_error)?;
+        let resp = self
+            .client
+            .chat()
+            .create(request)
+            .await
+            .map_err(map_openai_error)?;
         let content = resp
             .choices
             .first()

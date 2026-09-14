@@ -22,7 +22,9 @@ fn main() -> anyhow::Result<()> {
         let out_path = need(args.next());
         let f = std::fs::File::open(&cedict_path)?;
         let n = pardon_core::dict::cedict::CedictDb::import_to_path(
-            f, std::path::Path::new(&out_path))?;
+            f,
+            std::path::Path::new(&out_path),
+        )?;
         println!("imported {n} entries into {out_path}");
         return Ok(());
     }
@@ -33,7 +35,9 @@ fn main() -> anyhow::Result<()> {
         conn.pragma_update(None, "journal_mode", "OFF")?;
         conn.pragma_update(None, "synchronous", "OFF")?;
         let n = pardon_core::dict::ecdict::import::import_sqlite(
-            std::path::Path::new(&src_path), &conn)?;
+            std::path::Path::new(&src_path),
+            &conn,
+        )?;
         println!("imported {n} entries into {out_path}");
         return Ok(());
     }

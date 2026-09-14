@@ -4,7 +4,11 @@ use pardon_core::lang::Lang;
 use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
 
 fn req() -> TranslateRequest {
-    TranslateRequest { text: "hello".into(), from: Lang::En, to: Lang::Zh }
+    TranslateRequest {
+        text: "hello".into(),
+        from: Lang::En,
+        to: Lang::Zh,
+    }
 }
 
 fn engine(base_url: String) -> AnthropicEngine {
@@ -51,8 +55,9 @@ async fn stream_deltas_concatenated() {
                event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"好\"}}\n\n\
                event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
     Mock::given(matchers::method("POST"))
-        .respond_with(ResponseTemplate::new(200)
-            .set_body_raw(sse.as_bytes().to_vec(), "text/event-stream"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(sse.as_bytes().to_vec(), "text/event-stream"),
+        )
         .mount(&server)
         .await;
     let engine = engine(server.uri());
@@ -75,5 +80,8 @@ async fn api_error_maps_to_engine_error_with_status() {
         .await;
     let engine = engine(server.uri());
     let err = engine.translate(&req()).await.unwrap_err();
-    assert!(matches!(err, EngineError::Api(ref m) if m.contains("401")), "got: {err:?}");
+    assert!(
+        matches!(err, EngineError::Api(ref m) if m.contains("401")),
+        "got: {err:?}"
+    );
 }

@@ -89,12 +89,12 @@ pub struct RodioPlayer;
 impl AudioPlayer for RodioPlayer {
     fn play(&self, mp3: &[u8]) -> anyhow::Result<()> {
         // OutputStream 须存活到播放结束，故绑定 `_stream` 不掉。
-        let (_stream, handle) = rodio::OutputStream::try_default()
-            .context("打开默认音频输出设备失败")?;
+        let (_stream, handle) =
+            rodio::OutputStream::try_default().context("打开默认音频输出设备失败")?;
         let sink = rodio::Sink::try_new(&handle).context("创建 rodio sink 失败")?;
         // Sink::append 要求 Source: 'static，故拷贝一份 Owned 数据。
-        let source = rodio::Decoder::new(std::io::Cursor::new(mp3.to_vec()))
-            .context("mp3 解码失败")?;
+        let source =
+            rodio::Decoder::new(std::io::Cursor::new(mp3.to_vec())).context("mp3 解码失败")?;
         sink.append(source);
         sink.sleep_until_end();
         Ok(())
@@ -138,7 +138,10 @@ pub struct Tts {
 impl Tts {
     /// 默认播放链：rodio 播 mp3，espeak-ng 朗读文本兜底。
     pub fn new(cache_dir: PathBuf) -> Self {
-        Self::new_with_players(cache_dir, vec![Box::new(RodioPlayer), Box::new(EspeakPlayer)])
+        Self::new_with_players(
+            cache_dir,
+            vec![Box::new(RodioPlayer), Box::new(EspeakPlayer)],
+        )
     }
 
     pub fn new_with_players(cache_dir: PathBuf, players: Vec<Box<dyn AudioPlayer>>) -> Self {
@@ -146,7 +149,11 @@ impl Tts {
             .timeout(Duration::from_secs(5))
             .build()
             .expect("build tts http client");
-        Self { http, cache_dir, fallback: players }
+        Self {
+            http,
+            cache_dir,
+            fallback: players,
+        }
     }
 
     /// 注入自定义 http client（测试把 dict.youdao.com 解析到不可达地址）。
@@ -156,7 +163,11 @@ impl Tts {
         players: Vec<Box<dyn AudioPlayer>>,
         http: reqwest::Client,
     ) -> Self {
-        Self { http, cache_dir, fallback: players }
+        Self {
+            http,
+            cache_dir,
+            fallback: players,
+        }
     }
 
     /// 缓存路径：`sha1(tag|text).mp3`——同 (text, voice) 稳定，跨 voice 不同。
@@ -166,7 +177,11 @@ impl Tts {
         // 分隔符避免 tag 与 text 交界处的哈希歧义
         hasher.update(b"|");
         hasher.update(text.as_bytes());
-        let hex: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let hex: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         self.cache_dir.join(format!("{hex}.mp3"))
     }
 
@@ -201,7 +216,12 @@ impl Tts {
 
     /// 下载 mp3（client 自带 5s 超时）。
     async fn download(&self, url: &str) -> anyhow::Result<Vec<u8>> {
-        let resp = self.http.get(url).send().await.context("dictvoice 请求失败")?;
+        let resp = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("dictvoice 请求失败")?;
         let resp = resp.error_for_status().context("dictvoice HTTP 状态错误")?;
         let bytes = resp.bytes().await.context("dictvoice 响应读取失败")?;
         Ok(bytes.to_vec())
@@ -311,7 +331,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tts = Tts::new_with_players(dir.path().to_path_buf(), vec![]);
         let uk = tts.cache_path("hello", Voice::Uk);
-        assert_eq!(uk, tts.cache_path("hello", Voice::Uk), "同 text+voice 应稳定");
+        assert_eq!(
+            uk,
+            tts.cache_path("hello", Voice::Uk),
+            "同 text+voice 应稳定"
+        );
         assert_eq!(uk.extension().unwrap(), "mp3");
         assert!(uk.starts_with(dir.path()));
         assert_ne!(uk, tts.cache_path("hello", Voice::Us));
@@ -349,7 +373,11 @@ mod tests {
 
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].as_slice(), b"hello".as_slice(), "应收到原文而非 mp3");
+        assert_eq!(
+            calls[0].as_slice(),
+            b"hello".as_slice(),
+            "应收到原文而非 mp3"
+        );
     }
 
     #[tokio::test]
@@ -436,7 +464,10 @@ mod tests {
 
         tts.write_cache(&path, b"MP3DATA").unwrap();
 
-        assert_eq!(std::fs::read(&path).unwrap().as_slice(), b"MP3DATA".as_slice());
+        assert_eq!(
+            std::fs::read(&path).unwrap().as_slice(),
+            b"MP3DATA".as_slice()
+        );
     }
 
     #[tokio::test]

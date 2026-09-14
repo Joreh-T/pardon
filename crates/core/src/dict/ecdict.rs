@@ -1,4 +1,4 @@
-use super::{Exchange, Phonetic, WordCard, parse_translation_lines};
+use super::{parse_translation_lines, Exchange, Phonetic, WordCard};
 
 /// 解析 ECDICT exchange 字段，如 "d:perceived/p:perceived/3:perceives/i:perceiving" → [`Exchange`]。
 pub fn parse_exchange(raw: &str) -> Option<Exchange> {
@@ -17,7 +17,9 @@ pub fn parse_exchange(raw: &str) -> Option<Exchange> {
     };
     let mut any = false;
     for pair in raw.split('/') {
-        let Some((k, v)) = pair.split_once(':') else { continue };
+        let Some((k, v)) = pair.split_once(':') else {
+            continue;
+        };
         let v = v.trim().to_string();
         if v.is_empty() {
             continue;
@@ -35,7 +37,11 @@ pub fn parse_exchange(raw: &str) -> Option<Exchange> {
             _ => {}
         }
     }
-    if any { Some(ex) } else { None }
+    if any {
+        Some(ex)
+    } else {
+        None
+    }
 }
 
 /// ECDICT CSV 列（13 列，无表头，顺序见 spec §3.2）→ [`WordCard`]（found=true）。
@@ -52,7 +58,10 @@ pub fn row_to_card(row: &[&str]) -> Option<WordCard> {
         phonetic: if row[1].is_empty() {
             None
         } else {
-            Some(Phonetic { uk: Some(row[1].to_string()), us: None })
+            Some(Phonetic {
+                uk: Some(row[1].to_string()),
+                us: None,
+            })
         },
         pos: parse_translation_lines(row[3]),
         definition: row[2]
@@ -120,13 +129,14 @@ pub mod import {
     pub fn import_sqlite(src: &std::path::Path, conn: &Connection) -> anyhow::Result<u64> {
         use anyhow::Context;
         create_schema(conn).context("create schema")?;
-        let src_conn = Connection::open_with_flags(
-            src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        ).with_context(|| format!("open official ecdict sqlite {}", src.display()))?;
-        let mut stmt = src_conn.prepare(
-            "SELECT word, phonetic, definition, translation, pos, collins, oxford, tag, \
+        let src_conn = Connection::open_with_flags(src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("open official ecdict sqlite {}", src.display()))?;
+        let mut stmt = src_conn
+            .prepare(
+                "SELECT word, phonetic, definition, translation, pos, collins, oxford, tag, \
              bnc, frq, exchange, detail, audio FROM stardict",
-        ).context("select from stardict (官方库缺少 stardict 表？)")?;
+            )
+            .context("select from stardict (官方库缺少 stardict 表？)")?;
         let mut rows = stmt.query([])?;
         conn.execute_batch("BEGIN")?;
         let mut inserted = 0u64;
@@ -157,7 +167,9 @@ pub mod import {
 
     /// 插入单条 13 列行（返回 0=已存在跳过，1=新插入）；负责 entries + wordforms。
     fn insert_row(conn: &Connection, row: &[&str]) -> anyhow::Result<u64> {
-        let Some(card) = row_to_card(row) else { return Ok(0) };
+        let Some(card) = row_to_card(row) else {
+            return Ok(0);
+        };
         let pos_json = serde_json::to_string(&card.pos).unwrap();
         let ex_json = card
             .exchange
@@ -212,7 +224,8 @@ mod tests {
 
     #[test]
     fn exchange_full() {
-        let ex = parse_exchange("d:perceived/p:perceived/3:perceives/i:perceiving/0:perceive").unwrap();
+        let ex =
+            parse_exchange("d:perceived/p:perceived/3:perceives/i:perceiving/0:perceive").unwrap();
         assert_eq!(ex.pp.as_deref(), Some("perceived"));
         assert_eq!(ex.past.as_deref(), Some("perceived"));
         assert_eq!(ex.third.as_deref(), Some("perceives"));
@@ -238,7 +251,21 @@ mod tests {
     // 13 列 fixture：word,phonetic,definition,translation,pos,collins,oxford,tag,bnc,frq,exchange,detail,audio
     // 注意：与 Task 5 的 ecdict_mini.csv 中 run 行完全一致（权威数据源）
     fn run_row() -> Vec<&'static str> {
-        vec!["run","rʌn","move fast\noperate","n. 跑步\nv. 跑；运转","n:46/v:54","3","1","zk gk cet4","1234","567","p:ran/d:run/i:running/3:runs/0:run","",""]
+        vec![
+            "run",
+            "rʌn",
+            "move fast\noperate",
+            "n. 跑步\nv. 跑；运转",
+            "n:46/v:54",
+            "3",
+            "1",
+            "zk gk cet4",
+            "1234",
+            "567",
+            "p:ran/d:run/i:running/3:runs/0:run",
+            "",
+            "",
+        ]
     }
 
     #[test]
@@ -261,7 +288,22 @@ mod tests {
 
     #[test]
     fn row_to_card_minimal() {
-        let card = row_to_card(&["hello","həˈləu","","int. 你好","","","","","","","","",""]).unwrap();
+        let card = row_to_card(&[
+            "hello",
+            "həˈləu",
+            "",
+            "int. 你好",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ])
+        .unwrap();
         assert_eq!(card.pos[0].gloss, vec!["你好"]);
         assert_eq!(card.definition.len(), 0);
         assert!(card.exchange.is_none());
@@ -269,6 +311,6 @@ mod tests {
 
     #[test]
     fn row_with_too_few_columns_is_none() {
-        assert!(row_to_card(&["only","two"]).is_none());
+        assert!(row_to_card(&["only", "two"]).is_none());
     }
 }

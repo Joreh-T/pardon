@@ -23,7 +23,9 @@ pub async fn run(text: &str, lang_flag: &str) -> anyhow::Result<i32> {
     }
     let lang = resolve_lang(lang_flag, text)?;
     let cache_dir = pardon_core::pipeline::pardon_home()?.join("tts");
-    pardon_core::tts::Tts::new(cache_dir).speak(text, lang).await?;
+    pardon_core::tts::Tts::new(cache_dir)
+        .speak(text, lang)
+        .await?;
     Ok(0)
 }
 

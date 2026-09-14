@@ -36,7 +36,11 @@ fn set_env(home: &Path, youdao_base: Option<&str>) -> TestEnv {
         Some(base) => std::env::set_var("PARDON_YOUDAO_BASE", base),
         None => std::env::remove_var("PARDON_YOUDAO_BASE"),
     }
-    TestEnv { old_home, old_youdao, _lock: lock }
+    TestEnv {
+        old_home,
+        old_youdao,
+        _lock: lock,
+    }
 }
 
 impl Drop for TestEnv {
@@ -100,7 +104,11 @@ model = "m"
 }
 
 fn req_en2zh() -> TranslateRequest {
-    TranslateRequest { text: SENTENCE.into(), from: Lang::En, to: Lang::Zh }
+    TranslateRequest {
+        text: SENTENCE.into(),
+        from: Lang::En,
+        to: Lang::Zh,
+    }
 }
 
 #[test]
@@ -166,9 +174,16 @@ async fn translate_stream_word_emits_single_delta_with_full_card_text() {
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
 
     let mut deltas = Vec::new();
-    let t = p.translate_stream("run", |d| deltas.push(d.to_string())).await.unwrap();
+    let t = p
+        .translate_stream("run", |d| deltas.push(d.to_string()))
+        .await
+        .unwrap();
     let expected = card_text(&p.lookup("run"));
-    assert_eq!(deltas, vec![expected.clone()], "word 路由应恰好一次完整卡片文本 delta");
+    assert_eq!(
+        deltas,
+        vec![expected.clone()],
+        "word 路由应恰好一次完整卡片文本 delta"
+    );
     assert_eq!(t.engine, "ecdict");
     assert_eq!(t.translation, expected);
 }
@@ -177,8 +192,7 @@ async fn translate_stream_word_emits_single_delta_with_full_card_text() {
 async fn from_config_with_missing_dicts_degrades_to_empty() {
     let dir = tempfile::tempdir().unwrap();
     let _env = set_env(dir.path(), None);
-    let p = Pipeline::from_config(&AppConfig::default())
-        .expect("词典缺失时应以空库降级构造成功");
+    let p = Pipeline::from_config(&AppConfig::default()).expect("词典缺失时应以空库降级构造成功");
 
     let card = p.lookup("run");
     assert!(!card.found);
@@ -198,7 +212,10 @@ async fn translate_stream_sentence_without_llm_emits_single_delta() {
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
 
     let mut deltas = Vec::new();
-    let t = p.translate_stream(SENTENCE, |d| deltas.push(d.to_string())).await.unwrap();
+    let t = p
+        .translate_stream(SENTENCE, |d| deltas.push(d.to_string()))
+        .await
+        .unwrap();
     assert_eq!(deltas, vec![SENTENCE_ZH]);
     assert_eq!(t.engine, "youdao");
     assert_eq!(t.translation, SENTENCE_ZH);
@@ -222,7 +239,10 @@ async fn translate_stream_sentence_via_llm_forwards_deltas_and_skips_empty() {
     let p = Pipeline::from_config(&cfg_llm(&server.uri(), "youdao")).unwrap();
 
     let mut deltas = Vec::new();
-    let t = p.translate_stream(SENTENCE, |d| deltas.push(d.to_string())).await.unwrap();
+    let t = p
+        .translate_stream(SENTENCE, |d| deltas.push(d.to_string()))
+        .await
+        .unwrap();
     assert_eq!(deltas, vec!["请", "书"], "空串 delta 不应转发");
     assert_eq!(t.translation, "请书");
     assert_eq!(t.engine, "mock");
@@ -242,7 +262,10 @@ async fn translate_stream_llm_failure_falls_back_to_chain() {
     let p = Pipeline::from_config(&cfg_llm(&server.uri(), "youdao")).unwrap();
 
     let mut deltas = Vec::new();
-    let t = p.translate_stream(SENTENCE, |d| deltas.push(d.to_string())).await.unwrap();
+    let t = p
+        .translate_stream(SENTENCE, |d| deltas.push(d.to_string()))
+        .await
+        .unwrap();
     assert_eq!(deltas, vec![SENTENCE_ZH], "回退后完整译文应作单次 delta");
     assert_eq!(t.engine, "youdao");
     assert_eq!(t.translation, SENTENCE_ZH);
@@ -312,8 +335,13 @@ user_prompt_template = "TRANSLATE {text}"
     )
     .unwrap();
     let p = Pipeline::from_config(&cfg).unwrap();
-    p.chain_with("llm").expect("ollama provider should back the \"llm\" engine");
-    match p.llm.as_deref().expect("ollama provider should build an llm engine") {
+    p.chain_with("llm")
+        .expect("ollama provider should back the \"llm\" engine");
+    match p
+        .llm
+        .as_deref()
+        .expect("ollama provider should build an llm engine")
+    {
         LlmEngine::OpenAi(e) => {
             let c = e.config();
             // 尾部 '/' 被构造时 trim；其余字段按 provider 行透传
@@ -323,7 +351,10 @@ user_prompt_template = "TRANSLATE {text}"
             assert_eq!(c.system_prompt.as_deref(), Some("custom system"));
             assert_eq!(c.user_prompt_template.as_deref(), Some("TRANSLATE {text}"));
         }
-        other => panic!("ollama should map to the OpenAI-compatible engine, got {}", other.id()),
+        other => panic!(
+            "ollama should map to the OpenAI-compatible engine, got {}",
+            other.id()
+        ),
     }
 }
 
@@ -350,10 +381,17 @@ fn ollama_provider_with_empty_base_url_falls_back_to_11434() {
         ..AppConfig::default()
     };
     let p = Pipeline::from_config(&cfg).unwrap();
-    match p.llm.as_deref().expect("empty base_url should still build the engine") {
+    match p
+        .llm
+        .as_deref()
+        .expect("empty base_url should still build the engine")
+    {
         LlmEngine::OpenAi(e) => {
             assert_eq!(e.config().base_url, "http://127.0.0.1:11434/v1");
         }
-        other => panic!("ollama should map to the OpenAI-compatible engine, got {}", other.id()),
+        other => panic!(
+            "ollama should map to the OpenAI-compatible engine, got {}",
+            other.id()
+        ),
     }
 }

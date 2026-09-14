@@ -26,14 +26,20 @@ fn syllable_display(syl: &str) -> String {
         .find_map(|t| chars.iter().position(|c| c.eq_ignore_ascii_case(t)))
         .or_else(|| chars.windows(2).position(|w| w[0] == 'o' && w[1] == 'u'))
         .unwrap_or_else(|| {
-            chars.iter().rposition(|c| "aeiouüv".contains(c.to_ascii_lowercase())).unwrap_or(0)
+            chars
+                .iter()
+                .rposition(|c| "aeiouüv".contains(c.to_ascii_lowercase()))
+                .unwrap_or(0)
         });
     let mut out = chars.clone();
     for (base_ch, marks) in TONE_MARKS {
         if out[idx].eq_ignore_ascii_case(base_ch) {
             let m = marks[tone];
-            out[idx] =
-                if out[idx].is_uppercase() { m.to_uppercase().next().unwrap() } else { m };
+            out[idx] = if out[idx].is_uppercase() {
+                m.to_uppercase().next().unwrap()
+            } else {
+                m
+            };
             break;
         }
     }
@@ -62,8 +68,7 @@ pub fn pinyin_display(numeric: &str) -> String {
 fn is_syllable_token(t: &str) -> bool {
     match t.chars().next_back() {
         Some(last) => {
-            last.is_ascii_digit()
-                && t.chars().rev().skip(1).all(|c| c.is_ascii_alphabetic())
+            last.is_ascii_digit() && t.chars().rev().skip(1).all(|c| c.is_ascii_alphabetic())
         }
         None => false,
     }
@@ -73,7 +78,14 @@ fn is_syllable_token(t: &str) -> bool {
 /// 真实 CEDICT 的拼音包在 `[ ]` 里（解析前剥掉）、释义包在 `/…/` 里：
 /// 开头的 `/` 使该 token 不匹配音节，split('/') 后空段被滤掉。
 /// 去括号的简写格式 `繁體 简体 pin1 yin1 gloss1/gloss2` 同样兼容。
-pub fn parse_line(line: &str) -> Option<(String /*simp*/, String /*trad*/, String /*pinyin数字*/, Vec<String> /*glosses*/)> {
+pub fn parse_line(
+    line: &str,
+) -> Option<(
+    String,      /*simp*/
+    String,      /*trad*/
+    String,      /*pinyin数字*/
+    Vec<String>, /*glosses*/
+)> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
         return None;
@@ -88,7 +100,8 @@ pub fn parse_line(line: &str) -> Option<(String /*simp*/, String /*trad*/, Strin
         return None;
     }
     let pinyin = rest[..split_at].join(" ");
-    let glosses = rest[split_at..].join(" ")
+    let glosses = rest[split_at..]
+        .join(" ")
         .split('/')
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -167,7 +180,10 @@ impl DictProvider for CedictDb {
             Ok((py, glosses)) => Some(WordCard {
                 found: true,
                 word: word.to_string(),
-                phonetic: Some(Phonetic { uk: Some(pinyin_display(&py)), us: None }),
+                phonetic: Some(Phonetic {
+                    uk: Some(pinyin_display(&py)),
+                    us: None,
+                }),
                 pos: vec![PosGloss {
                     pos: "".into(),
                     gloss: serde_json::from_str(&glosses).unwrap_or_default(),

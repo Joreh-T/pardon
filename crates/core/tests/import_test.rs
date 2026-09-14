@@ -12,16 +12,27 @@ fn imports_rows_and_builds_wordforms() {
     let (conn, _d) = setup();
     let n = import_csv(include_str!("fixtures/ecdict_mini.csv").as_bytes(), &conn).unwrap();
     assert_eq!(n, 7);
-    let (w, pos_json): (String, String) = conn.query_row(
-        "SELECT word, pos_json FROM entries WHERE word='run'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    let (w, pos_json): (String, String) = conn
+        .query_row(
+            "SELECT word, pos_json FROM entries WHERE word='run'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
     assert_eq!(w, "run");
     assert!(pos_json.contains("\"n.\""));
     // wordforms 反向表：gave → give
-    let lemma: String = conn.query_row(
-        "SELECT lemma FROM wordforms WHERE form='gave'", [], |r| r.get(0)).unwrap();
+    let lemma: String = conn
+        .query_row("SELECT lemma FROM wordforms WHERE form='gave'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
     assert_eq!(lemma, "give");
-    let lemma: String = conn.query_row(
-        "SELECT lemma FROM wordforms WHERE form='boxes'", [], |r| r.get(0)).unwrap();
+    let lemma: String = conn
+        .query_row("SELECT lemma FROM wordforms WHERE form='boxes'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
     assert_eq!(lemma, "box");
 }
 
@@ -31,7 +42,9 @@ fn import_is_idempotent() {
     import_csv(include_str!("fixtures/ecdict_mini.csv").as_bytes(), &conn).unwrap();
     let n2 = import_csv(include_str!("fixtures/ecdict_mini.csv").as_bytes(), &conn).unwrap();
     assert_eq!(n2, 0, "重复导入相同词条应跳过");
-    let cnt: i64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0)).unwrap();
+    let cnt: i64 = conn
+        .query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(cnt, 7);
 }
 
@@ -39,15 +52,24 @@ fn import_is_idempotent() {
 fn perceive_row_columns_not_drifted() {
     let (conn, _d) = setup();
     import_csv(include_str!("fixtures/ecdict_mini.csv").as_bytes(), &conn).unwrap();
-    let (collins, tags, ex_json): (i64, String, Option<String>) = conn.query_row(
-        "SELECT collins, tags, exchange_json FROM entries WHERE word='perceive'", [],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+    let (collins, tags, ex_json): (i64, String, Option<String>) = conn
+        .query_row(
+            "SELECT collins, tags, exchange_json FROM entries WHERE word='perceive'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
     assert_eq!(collins, 2);
     assert_eq!(tags, "cet6 ky");
     assert!(ex_json.unwrap().contains("\"third\":\"perceives\""));
     // give up 行 definition 应为 surrender（列 3）
-    let def: String = conn.query_row(
-        "SELECT definition FROM entries WHERE word='give up'", [], |r| r.get(0)).unwrap();
+    let def: String = conn
+        .query_row(
+            "SELECT definition FROM entries WHERE word='give up'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(def, "surrender");
 }
 
@@ -66,15 +88,99 @@ fn official_minidb(path: &std::path::Path) {
     )
     .unwrap();
     // (word, phonetic, definition, translation, pos, collins, oxford, tag, bnc, frq, exchange)
-    type Row<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str, i64, i64, &'a str, i64, i64, &'a str);
+    type Row<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        i64,
+        i64,
+        &'a str,
+        i64,
+        i64,
+        &'a str,
+    );
     let rows: Vec<Row> = vec![
-        ("run", "rʌn", "move fast\noperate", "n. 跑步\nv. 跑；运转", "n:46/v:54", 3, 1, "zk gk cet4", 1234, 567, "p:ran/d:run/i:running/3:runs/0:run"),
+        (
+            "run",
+            "rʌn",
+            "move fast\noperate",
+            "n. 跑步\nv. 跑；运转",
+            "n:46/v:54",
+            3,
+            1,
+            "zk gk cet4",
+            1234,
+            567,
+            "p:ran/d:run/i:running/3:runs/0:run",
+        ),
         ("gave", "ɡeɪv", "", "", "", 0, 0, "", 0, 0, "0:give"),
-        ("give", "ɡɪv", "", "vt. 给予", "", 3, 1, "cet4", 0, 0, "d:given/p:gave/i:giving/3:gives/0:give"),
-        ("hello", "həˈləu", "", "int. 你好", "", 0, 0, "zk", 1234, 1, ""),
-        ("give up", "", "surrender", "放弃；认输", "", 0, 0, "", 1234, 10, "0:give up"),
-        ("box", "bɒks", "", "n. 盒子", "n:100", 1, 0, "zk", 998, 88, "s:boxes/0:box"),
-        ("perceive", "pəˈsiːv", "sense\nbecome aware of", "vt. 感知；察觉", "v:54", 2, 0, "cet6 ky", 2500, 4000, "d:perceived/p:perceived/3:perceives/i:perceiving/0:perceive"),
+        (
+            "give",
+            "ɡɪv",
+            "",
+            "vt. 给予",
+            "",
+            3,
+            1,
+            "cet4",
+            0,
+            0,
+            "d:given/p:gave/i:giving/3:gives/0:give",
+        ),
+        (
+            "hello",
+            "həˈləu",
+            "",
+            "int. 你好",
+            "",
+            0,
+            0,
+            "zk",
+            1234,
+            1,
+            "",
+        ),
+        (
+            "give up",
+            "",
+            "surrender",
+            "放弃；认输",
+            "",
+            0,
+            0,
+            "",
+            1234,
+            10,
+            "0:give up",
+        ),
+        (
+            "box",
+            "bɒks",
+            "",
+            "n. 盒子",
+            "n:100",
+            1,
+            0,
+            "zk",
+            998,
+            88,
+            "s:boxes/0:box",
+        ),
+        (
+            "perceive",
+            "pəˈsiːv",
+            "sense\nbecome aware of",
+            "vt. 感知；察觉",
+            "v:54",
+            2,
+            0,
+            "cet6 ky",
+            2500,
+            4000,
+            "d:perceived/p:perceived/3:perceives/i:perceiving/0:perceive",
+        ),
     ];
     for r in rows {
         s.execute(
@@ -97,17 +203,29 @@ fn import_from_official_sqlite_layout() {
     assert_eq!(n, 7, "官方 sqlite 全部 7 条应导入");
 
     // 与 CSV 导入关键行为等价
-    let (w, pos_json, collins): (String, String, i64) = conn.query_row(
-        "SELECT word, pos_json, collins FROM entries WHERE word='run'", [],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+    let (w, pos_json, collins): (String, String, i64) = conn
+        .query_row(
+            "SELECT word, pos_json, collins FROM entries WHERE word='run'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
     assert_eq!(w, "run");
     assert!(pos_json.contains("\"n.\"") && pos_json.contains("\"v.\""));
     assert_eq!(collins, 3);
-    let lemma: String = conn.query_row(
-        "SELECT lemma FROM wordforms WHERE form='gave'", [], |r| r.get(0)).unwrap();
+    let lemma: String = conn
+        .query_row("SELECT lemma FROM wordforms WHERE form='gave'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
     assert_eq!(lemma, "give");
-    let def: String = conn.query_row(
-        "SELECT definition FROM entries WHERE word='give up'", [], |r| r.get(0)).unwrap();
+    let def: String = conn
+        .query_row(
+            "SELECT definition FROM entries WHERE word='give up'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(def, "surrender");
 }
 
@@ -120,6 +238,8 @@ fn import_from_official_sqlite_is_idempotent() {
     import_sqlite(&src, &conn).unwrap();
     let n2 = import_sqlite(&src, &conn).unwrap();
     assert_eq!(n2, 0);
-    let cnt: i64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0)).unwrap();
+    let cnt: i64 = conn
+        .query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(cnt, 7);
 }

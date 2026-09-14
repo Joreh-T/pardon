@@ -123,7 +123,12 @@ impl Pipeline {
                 engines.insert(0, llm.clone());
             }
         }
-        Ok(Self { ecdict, cedict, chain: Chain { engines }, llm })
+        Ok(Self {
+            ecdict,
+            cedict,
+            chain: Chain { engines },
+            llm,
+        })
     }
 
     /// 查词：zh → CEDICT，en → ECDICT。未命中返回 `found:false` 卡片并填
@@ -141,7 +146,11 @@ impl Pipeline {
             oxford: false,
             tags: Vec::new(),
             source: if lang == Lang::Zh { "cedict" } else { "ecdict" }.to_string(),
-            suggestions: if lang == Lang::En { self.ecdict.suggest(word) } else { Vec::new() },
+            suggestions: if lang == Lang::En {
+                self.ecdict.suggest(word)
+            } else {
+                Vec::new()
+            },
         };
         match lang {
             Lang::Zh => self.cedict.lookup(word).unwrap_or_else(miss),
@@ -166,8 +175,11 @@ impl Pipeline {
             }
             Route::Sentence(t) => {
                 let (source_lang, target_lang) = lang::direction(&t);
-                let req =
-                    TranslateRequest { text: t.clone(), from: source_lang, to: target_lang };
+                let req = TranslateRequest {
+                    text: t.clone(),
+                    from: source_lang,
+                    to: target_lang,
+                };
                 let (translation, engine): (String, &str) =
                     self.chain.translate(&req).await.unwrap_or_default();
                 Translation {
@@ -206,12 +218,19 @@ impl Pipeline {
             }
             Route::Sentence(t) => {
                 let (source_lang, target_lang) = lang::direction(&t);
-                let req =
-                    TranslateRequest { text: t.clone(), from: source_lang, to: target_lang };
+                let req = TranslateRequest {
+                    text: t.clone(),
+                    from: source_lang,
+                    to: target_lang,
+                };
                 if let Some(llm) = &self.llm {
                     // 部分端点会发空串增量：跳过不转发
                     let streamed = llm
-                        .translate_stream(&req, |d| if !d.is_empty() { on_delta(d) })
+                        .translate_stream(&req, |d| {
+                            if !d.is_empty() {
+                                on_delta(d)
+                            }
+                        })
                         .await;
                     if let Ok(translation) = streamed {
                         return Ok(Translation {
@@ -252,7 +271,9 @@ impl Pipeline {
                 ))
             }
         };
-        Ok(Chain { engines: vec![engine] })
+        Ok(Chain {
+            engines: vec![engine],
+        })
     }
 }
 
@@ -272,8 +293,7 @@ pub fn pardon_home() -> anyhow::Result<PathBuf> {
 /// 词典存在则只读打开；缺失则空库降级 + stderr 提示导入命令。
 fn load_ecdict(path: &Path) -> anyhow::Result<EcdictDb> {
     if path.exists() {
-        return EcdictDb::open(path)
-            .with_context(|| format!("open ecdict at {}", path.display()));
+        return EcdictDb::open(path).with_context(|| format!("open ecdict at {}", path.display()));
     }
     eprintln!(
         "pardon: ecdict dictionary not found at {}; run the importer (see dicts/README.md)",
@@ -284,8 +304,7 @@ fn load_ecdict(path: &Path) -> anyhow::Result<EcdictDb> {
 
 fn load_cedict(path: &Path) -> anyhow::Result<CedictDb> {
     if path.exists() {
-        return CedictDb::open(path)
-            .with_context(|| format!("open cedict at {}", path.display()));
+        return CedictDb::open(path).with_context(|| format!("open cedict at {}", path.display()));
     }
     eprintln!(
         "pardon: cedict dictionary not found at {}; run the importer (see dicts/README.md)",
@@ -311,7 +330,9 @@ fn build_llm(cfg: &AppConfig) -> Option<Arc<LlmEngine>> {
         ProviderType::Openai => LlmEngine::OpenAi(OpenAiEngine::new(OpenAiConfig {
             id: p.id.clone(),
             base_url,
-            api_key: p.resolve_api_key(std::env::var).unwrap_or_else(|| "none".into()),
+            api_key: p
+                .resolve_api_key(std::env::var)
+                .unwrap_or_else(|| "none".into()),
             model: p.model.clone(),
             system_prompt: p.system_prompt.clone(),
             user_prompt_template: p.user_prompt_template.clone(),
@@ -334,7 +355,9 @@ fn build_llm(cfg: &AppConfig) -> Option<Arc<LlmEngine>> {
                 id: p.id.clone(),
                 base_url,
                 // 无 key 来源时回退 "ollama"（部分 OpenAI 兼容层要求非空 key）
-                api_key: p.resolve_api_key(std::env::var).unwrap_or_else(|| "ollama".into()),
+                api_key: p
+                    .resolve_api_key(std::env::var)
+                    .unwrap_or_else(|| "ollama".into()),
                 model: p.model.clone(),
                 system_prompt: p.system_prompt.clone(),
                 user_prompt_template: p.user_prompt_template.clone(),
@@ -368,8 +391,14 @@ mod tests {
     #[test]
     fn card_text_renders_pos_lines_joined_by_fullwidth_semicolon() {
         let c = card(vec![
-            PosGloss { pos: "n.".into(), gloss: vec!["跑步".into()] },
-            PosGloss { pos: "v.".into(), gloss: vec!["跑".into(), "运转".into()] },
+            PosGloss {
+                pos: "n.".into(),
+                gloss: vec!["跑步".into()],
+            },
+            PosGloss {
+                pos: "v.".into(),
+                gloss: vec!["跑".into(), "运转".into()],
+            },
         ]);
         assert_eq!(card_text(&c), "n. 跑步\nv. 跑；运转");
     }

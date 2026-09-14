@@ -1,7 +1,7 @@
 //! TOML 配置：加载、校验与默认配置写入。
 
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -19,7 +19,10 @@ fn default_engine_youdao() -> String {
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self { default_engine: "youdao".into(), llm: LlmConfig::default() }
+        Self {
+            default_engine: "youdao".into(),
+            llm: LlmConfig::default(),
+        }
     }
 }
 
@@ -200,13 +203,15 @@ impl AppConfig {
                     reason: "must name a providers[].id when default_engine = \"llm\"".into(),
                 });
             }
-            if !self.llm.providers.iter().any(|p| p.id == self.llm.default_provider) {
+            if !self
+                .llm
+                .providers
+                .iter()
+                .any(|p| p.id == self.llm.default_provider)
+            {
                 return Err(ConfigError::Invalid {
                     field: "llm.default_provider".into(),
-                    reason: format!(
-                        "no provider with id {:?}",
-                        self.llm.default_provider
-                    ),
+                    reason: format!("no provider with id {:?}", self.llm.default_provider),
                 });
             }
         }
@@ -455,7 +460,9 @@ model = "qwen2.5:7b"
             .unwrap();
         assert_eq!(key, "sekret");
         // 变量不存在 → None
-        assert!(p.resolve_api_key(|_| Err(std::env::VarError::NotPresent)).is_none());
+        assert!(p
+            .resolve_api_key(|_| Err(std::env::VarError::NotPresent))
+            .is_none());
     }
 
     #[test]

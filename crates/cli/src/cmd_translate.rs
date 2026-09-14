@@ -58,14 +58,19 @@ async fn run_stream(
         // 单引擎链无流式回调：成功后把完整译文作单次 delta（统一 meta →
         // delta → result 节奏，与 pipeline 兜底行为一致）
         Some(chain) => {
-            tokio::time::timeout(dur, translate_via_chain(chain, to_request(text, source, target)))
-                .await
+            tokio::time::timeout(
+                dur,
+                translate_via_chain(chain, to_request(text, source, target)),
+            )
+            .await
         }
         None => {
             tokio::time::timeout(dur, async {
                 pipeline
                     .translate_stream(text, |d| {
-                        let _ = emit(&StreamEvent::Delta { text: d.to_string() });
+                        let _ = emit(&StreamEvent::Delta {
+                            text: d.to_string(),
+                        });
                     })
                     .await
             })
@@ -77,7 +82,9 @@ async fn run_stream(
     // 错误只走 stderr）
     finish(&t)?;
     if single.is_some() {
-        emit(&StreamEvent::Delta { text: t.translation.clone() })?;
+        emit(&StreamEvent::Delta {
+            text: t.translation.clone(),
+        })?;
     }
     emit(&result_event(&t))?;
     Ok(0)
@@ -95,8 +102,11 @@ async fn run_plain(
 ) -> anyhow::Result<i32> {
     let outcome = match single {
         Some(chain) => {
-            tokio::time::timeout(dur, translate_via_chain(chain, to_request(text, source, target)))
-                .await
+            tokio::time::timeout(
+                dur,
+                translate_via_chain(chain, to_request(text, source, target)),
+            )
+            .await
         }
         // pipeline.translate 非 Result：全链失败以「译文与引擎皆空」表达
         None => tokio::time::timeout(dur, async { Ok(pipeline.translate(text).await) }).await,
@@ -137,8 +147,7 @@ fn finish(t: &Translation) -> anyhow::Result<()> {
     if t.translation.is_empty() && t.engine.is_empty() {
         output::event_exit(
             "engine",
-            "all translation engines failed (hint: configure an llm provider, see README)"
-                .into(),
+            "all translation engines failed (hint: configure an llm provider, see README)".into(),
             2,
         );
     }
@@ -161,7 +170,11 @@ async fn translate_via_chain(
 }
 
 fn to_request(text: &str, from: Lang, to: Lang) -> TranslateRequest {
-    TranslateRequest { text: text.to_string(), from, to }
+    TranslateRequest {
+        text: text.to_string(),
+        from,
+        to,
+    }
 }
 
 /// Result 事件：字段名对齐 core `Translation`，语言为小写码。
@@ -208,8 +221,16 @@ fn collect_text(args: &TranslateArgs) -> anyhow::Result<String> {
 /// 实际使用的方向）。
 fn resolve_langs(source: &str, target: &str, text: &str) -> anyhow::Result<(Lang, Lang)> {
     let (auto_from, auto_to) = lang::direction(text);
-    let from = if source == "auto" { auto_from } else { parse_lang(source)? };
-    let to = if target == "auto" { auto_to } else { parse_lang(target)? };
+    let from = if source == "auto" {
+        auto_from
+    } else {
+        parse_lang(source)?
+    };
+    let to = if target == "auto" {
+        auto_to
+    } else {
+        parse_lang(target)?
+    };
     Ok((from, to))
 }
 
@@ -274,7 +295,10 @@ mod tests {
 
     #[test]
     fn resolve_langs_explicit_overrides_and_rejects_unknown() {
-        assert_eq!(resolve_langs("zh", "en", "hello").unwrap(), (Lang::Zh, Lang::En));
+        assert_eq!(
+            resolve_langs("zh", "en", "hello").unwrap(),
+            (Lang::Zh, Lang::En)
+        );
         assert!(resolve_langs("fr", "auto", "hello").is_err());
         assert!(resolve_langs("auto", "ja", "hello").is_err());
     }

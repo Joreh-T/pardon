@@ -34,9 +34,10 @@ pub struct Chain {
 
 impl Chain {
     /// 按序尝试，返回 (译文, 成功引擎名)；全部失败返回最后一个 Err
-    pub async fn translate(&self, req: &TranslateRequest)
-        -> Result<(String, &'static str), EngineError>
-    {
+    pub async fn translate(
+        &self,
+        req: &TranslateRequest,
+    ) -> Result<(String, &'static str), EngineError> {
         let mut last: Option<EngineError> = None;
         for e in &self.engines {
             match e.translate(req).await {
@@ -57,7 +58,9 @@ mod tests {
     struct OkEngine(&'static str);
     #[async_trait::async_trait]
     impl Engine for OkEngine {
-        fn name(&self) -> &'static str { self.0 }
+        fn name(&self) -> &'static str {
+            self.0
+        }
         async fn translate(&self, _r: &TranslateRequest) -> Result<String, EngineError> {
             Ok(format!("translated-by-{}", self.0))
         }
@@ -65,35 +68,50 @@ mod tests {
     struct FailEngine(&'static str);
     #[async_trait::async_trait]
     impl Engine for FailEngine {
-        fn name(&self) -> &'static str { self.0 }
+        fn name(&self) -> &'static str {
+            self.0
+        }
         async fn translate(&self, _r: &TranslateRequest) -> Result<String, EngineError> {
             Err(EngineError::Api(format!("boom-{}", self.0)))
         }
     }
 
     fn req() -> TranslateRequest {
-        TranslateRequest { text: "hi".into(), from: Lang::En, to: Lang::Zh }
+        TranslateRequest {
+            text: "hi".into(),
+            from: Lang::En,
+            to: Lang::Zh,
+        }
     }
 
     #[tokio::test]
     async fn chain_returns_first_success() {
-        let chain = Chain { engines: vec![Arc::new(OkEngine("a")), Arc::new(OkEngine("b"))] };
+        let chain = Chain {
+            engines: vec![Arc::new(OkEngine("a")), Arc::new(OkEngine("b"))],
+        };
         let (out, engine) = chain.translate(&req()).await.unwrap();
         assert_eq!((out.as_str(), engine), ("translated-by-a", "a"));
     }
 
     #[tokio::test]
     async fn chain_falls_through_failures() {
-        let chain = Chain { engines: vec![Arc::new(FailEngine("x")), Arc::new(OkEngine("y"))] };
+        let chain = Chain {
+            engines: vec![Arc::new(FailEngine("x")), Arc::new(OkEngine("y"))],
+        };
         let (out, engine) = chain.translate(&req()).await.unwrap();
         assert_eq!((out.as_str(), engine), ("translated-by-y", "y"));
     }
 
     #[tokio::test]
     async fn chain_all_fail_returns_last_error() {
-        let chain = Chain { engines: vec![Arc::new(FailEngine("x")), Arc::new(FailEngine("z"))] };
+        let chain = Chain {
+            engines: vec![Arc::new(FailEngine("x")), Arc::new(FailEngine("z"))],
+        };
         let err = chain.translate(&req()).await.unwrap_err();
-        assert!(matches!(err, EngineError::Api(m) if m == "boom-z"), "应返回最后一个错误");
+        assert!(
+            matches!(err, EngineError::Api(m) if m == "boom-z"),
+            "应返回最后一个错误"
+        );
     }
 
     #[tokio::test]

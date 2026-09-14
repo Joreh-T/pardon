@@ -5,7 +5,10 @@ use rusqlite::Connection;
 #[test]
 fn parse_valid_line() {
     let (simp, trad, py, glosses) = parse_line("你好 你好 ni3 hao3 you (informal)/hello").unwrap();
-    assert_eq!((simp.as_str(), trad.as_str(), py.as_str()), ("你好", "你好", "ni3 hao3"));
+    assert_eq!(
+        (simp.as_str(), trad.as_str(), py.as_str()),
+        ("你好", "你好", "ni3 hao3")
+    );
     assert_eq!(glosses, vec!["you (informal)", "hello"]);
 }
 
@@ -52,7 +55,10 @@ fn import_to_path_then_open_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cedict.sqlite");
     let n = CedictDb::import_to_path(
-        std::io::Cursor::new(include_str!("fixtures/cedict_mini.u8")), &path).unwrap();
+        std::io::Cursor::new(include_str!("fixtures/cedict_mini.u8")),
+        &path,
+    )
+    .unwrap();
     assert_eq!(n, 5);
     let db = CedictDb::open(&path).unwrap();
     let card = db.lookup("绿").unwrap();
@@ -71,7 +77,10 @@ fn reimport_to_existing_db_overwrites_instead_of_erroring() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cedict.sqlite");
     let n1 = CedictDb::import_to_path(
-        std::io::Cursor::new(include_str!("fixtures/cedict_mini.u8")), &path).unwrap();
+        std::io::Cursor::new(include_str!("fixtures/cedict_mini.u8")),
+        &path,
+    )
+    .unwrap();
     assert_eq!(n1, 5);
 
     // 第二次导入：2 行变体，「你好」gloss 改写
@@ -82,13 +91,17 @@ fn reimport_to_existing_db_overwrites_instead_of_erroring() {
 
     let db = CedictDb::open(&path).unwrap();
     let card = db.lookup("你好").unwrap();
-    assert_eq!(card.pos[0].gloss, vec!["hi there".to_string(), "greetings".to_string()]);
+    assert_eq!(
+        card.pos[0].gloss,
+        vec!["hi there".to_string(), "greetings".to_string()]
+    );
     // 变体未覆盖的旧词条保留
     let card = db.lookup("绿").unwrap();
     assert_eq!(card.pos[0].gloss, vec!["green".to_string()]);
     // 行数仍为 5（2 条覆盖 + 3 条保留）
     let conn = Connection::open(&path).unwrap();
-    let count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM cedict", [], |r| r.get(0)).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM cedict", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(count, 5);
 }

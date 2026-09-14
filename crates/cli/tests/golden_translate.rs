@@ -20,7 +20,10 @@ fn pardon() -> Command {
     let mut c = Command::cargo_bin("pardon").unwrap();
     let core_tests = env!("CARGO_MANIFEST_DIR").to_string() + "/../core/tests";
     c.env("PARDON_HOME", core_tests.clone() + "/pip_home");
-    c.env("PARDON_CONFIG", core_tests + "/pip_home/no-such-config.toml");
+    c.env(
+        "PARDON_CONFIG",
+        core_tests + "/pip_home/no-such-config.toml",
+    );
     c
 }
 
@@ -48,7 +51,9 @@ async fn mount_youdao(server: &MockServer, input: &str, output: &str) {
 fn jsonl(stdout: &str) -> Vec<Value> {
     stdout
         .lines()
-        .map(|line| serde_json::from_str(line).unwrap_or_else(|e| panic!("行不是合法 JSON（{e}）：{line}")))
+        .map(|line| {
+            serde_json::from_str(line).unwrap_or_else(|e| panic!("行不是合法 JSON（{e}）：{line}"))
+        })
         .collect()
 }
 
@@ -58,8 +63,14 @@ async fn translate_sentence_plain_json_result_youdao() {
     let server = MockServer::start().await;
     mount_youdao(&server, SENTENCE, SENTENCE_ZH).await;
 
-    let out = mocked(&server).args(["translate", "--json", SENTENCE]).unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = mocked(&server)
+        .args(["translate", "--json", SENTENCE])
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines.len(), 1, "--json 应恰好一行，实际 stdout：{stdout}");
@@ -77,10 +88,20 @@ async fn translate_sentence_plain_json_result_youdao() {
 async fn stream_word_run_meta_delta_result_ecdict() {
     // 词路由只查词典，不触引擎；mock server 兜底防真实网络
     let server = MockServer::start().await;
-    let out = mocked(&server).args(["translate", "--stream", "run"]).unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = mocked(&server)
+        .args(["translate", "--stream", "run"])
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let events = jsonl(&String::from_utf8_lossy(&out.stdout));
-    assert_eq!(events.len(), 3, "应恰三行（meta/delta/result），实际：{events:?}");
+    assert_eq!(
+        events.len(),
+        3,
+        "应恰三行（meta/delta/result），实际：{events:?}"
+    );
 
     let meta = &events[0];
     assert_eq!(meta["type"], "meta");
@@ -108,8 +129,14 @@ async fn stream_sentence_without_llm_single_delta_youdao() {
     let server = MockServer::start().await;
     mount_youdao(&server, SENTENCE, SENTENCE_ZH).await;
 
-    let out = mocked(&server).args(["translate", "--stream", SENTENCE]).unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = mocked(&server)
+        .args(["translate", "--stream", SENTENCE])
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let events = jsonl(&String::from_utf8_lossy(&out.stdout));
     assert_eq!(events.len(), 3, "无 LLM 时应恰三行，实际：{events:?}");
 
@@ -162,12 +189,14 @@ async fn explicit_engine_bing_two_step_success() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/translator"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            b"<html><head><script>var _G={IG:\"AB12CD\",ST:(!e&&123)};</script></head>\
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                b"<html><head><script>var _G={IG:\"AB12CD\",ST:(!e&&123)};</script></head>\
               <body><div id=\"tta_outGDCont\" data-iid=\"translator.5023\"></div></body></html>"
-                .to_vec(),
-            "text/html",
-        ))
+                    .to_vec(),
+                "text/html",
+            ),
+        )
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -189,7 +218,11 @@ async fn explicit_engine_bing_two_step_success() {
     let out = mocked(&server)
         .args(["translate", "--json", "--engine", "bing", SENTENCE])
         .unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let v: Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(v["type"], "result");
@@ -227,7 +260,10 @@ async fn total_chain_failure_exits_2_stderr_only() {
     assert_eq!(v["code"], "engine");
     // 全链失败时给出可行动的提示（Fix 7；timeout 路径不带）
     assert!(
-        v["message"].as_str().unwrap_or_default().contains("hint: configure an llm provider"),
+        v["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("hint: configure an llm provider"),
         "message 应含 LLM 配置提示：{v}"
     );
 }
@@ -263,7 +299,11 @@ async fn stdin_multiline_zh_requests_zh_cn_en_and_preserves_text() {
         .args(["translate", "--stdin", "--json"])
         .write_stdin(input)
         .unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines.len(), 1, "--json 应恰好一行，实际 stdout：{stdout}");

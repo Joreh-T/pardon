@@ -71,7 +71,10 @@ fn resolve_api_key_prefers_inline_then_env_then_none() {
     assert!(p.resolve_api_key(|_| Ok("unexpected".into())).is_none());
 
     // 仅 api_key_env：getter 命中 → Some
-    let p = ProviderConfig { api_key_env: Some("DEEPSEEK_API_KEY".into()), ..p };
+    let p = ProviderConfig {
+        api_key_env: Some("DEEPSEEK_API_KEY".into()),
+        ..p
+    };
     let key = p
         .resolve_api_key(|name| {
             (name == "DEEPSEEK_API_KEY")
@@ -85,7 +88,10 @@ fn resolve_api_key_prefers_inline_then_env_then_none() {
     assert!(p.resolve_api_key(|_| Err(VarError::NotPresent)).is_none());
 
     // api_key 明文优先于 api_key_env
-    let p = ProviderConfig { api_key: Some("sk-plain".into()), ..p };
+    let p = ProviderConfig {
+        api_key: Some("sk-plain".into()),
+        ..p
+    };
     assert_eq!(
         p.resolve_api_key(|_| Err(VarError::NotPresent)).as_deref(),
         Some("sk-plain")

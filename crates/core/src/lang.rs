@@ -14,11 +14,19 @@ pub fn is_cjk_char(c: char) -> bool {
 }
 
 pub fn detect(text: &str) -> Lang {
-    if text.chars().any(is_cjk_char) { Lang::Zh } else { Lang::En }
+    if text.chars().any(is_cjk_char) {
+        Lang::Zh
+    } else {
+        Lang::En
+    }
 }
 
 pub fn direction(text: &str) -> (Lang, Lang) {
-    if detect(text) == Lang::Zh { (Lang::Zh, Lang::En) } else { (Lang::En, Lang::Zh) }
+    if detect(text) == Lang::Zh {
+        (Lang::Zh, Lang::En)
+    } else {
+        (Lang::En, Lang::Zh)
+    }
 }
 
 pub fn display(lang: Lang) -> &'static str {

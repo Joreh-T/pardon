@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 /// ECDICT translation 字段中出现的词性缩写（行首前缀）。
 /// 注意 ECDICT 的 pos 数据列不可靠（spec §3.2），词性一律从此处解析。
 const POS_ABBRS: &[&str] = &[
-    "n.", "v.", "vt.", "vi.", "adj.", "adv.", "art.", "aux.v.", "aux.", "conj.", "prep.",
-    "pron.", "int.", "interj.", "num.", "abbr.",
+    "n.", "v.", "vt.", "vi.", "adj.", "adv.", "art.", "aux.v.", "aux.", "conj.", "prep.", "pron.",
+    "int.", "interj.", "num.", "abbr.",
 ];
 
 /// 单个词条（CLI JSON 契约的顶层结构）。
@@ -97,7 +97,10 @@ pub fn parse_translation_lines(raw: &str) -> Vec<PosGloss> {
             }
             match out.iter_mut().find(|pg| pg.pos == pos) {
                 Some(pg) => pg.gloss.push(g.to_string()),
-                None => out.push(PosGloss { pos: pos.to_string(), gloss: vec![g.to_string()] }),
+                None => out.push(PosGloss {
+                    pos: pos.to_string(),
+                    gloss: vec![g.to_string()],
+                }),
             }
         }
     }
@@ -112,23 +115,53 @@ mod tests {
     fn parse_with_pos_prefixes() {
         let out = parse_translation_lines("n. 火药\nv. 使爆炸；配制\nvt. 感知");
         assert_eq!(out.len(), 3);
-        assert_eq!(out[0], PosGloss { pos: "n.".into(), gloss: vec!["火药".into()] });
-        assert_eq!(out[1], PosGloss { pos: "v.".into(), gloss: vec!["使爆炸".into(), "配制".into()] });
-        assert_eq!(out[2], PosGloss { pos: "vt.".into(), gloss: vec!["感知".into()] });
+        assert_eq!(
+            out[0],
+            PosGloss {
+                pos: "n.".into(),
+                gloss: vec!["火药".into()]
+            }
+        );
+        assert_eq!(
+            out[1],
+            PosGloss {
+                pos: "v.".into(),
+                gloss: vec!["使爆炸".into(), "配制".into()]
+            }
+        );
+        assert_eq!(
+            out[2],
+            PosGloss {
+                pos: "vt.".into(),
+                gloss: vec!["感知".into()]
+            }
+        );
     }
 
     #[test]
     fn parse_lines_without_prefix_group_into_empty_pos() {
         let out = parse_translation_lines("你好\n感叹词");
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0], PosGloss { pos: "".into(), gloss: vec!["你好".into(), "感叹词".into()] });
+        assert_eq!(
+            out[0],
+            PosGloss {
+                pos: "".into(),
+                gloss: vec!["你好".into(), "感叹词".into()]
+            }
+        );
     }
 
     #[test]
     fn parse_mixed() {
         let out = parse_translation_lines("adj. 高的\n高级的");
         assert_eq!(out.len(), 2);
-        assert_eq!(out[1], PosGloss { pos: "".into(), gloss: vec!["高级的".into()] });
+        assert_eq!(
+            out[1],
+            PosGloss {
+                pos: "".into(),
+                gloss: vec!["高级的".into()]
+            }
+        );
     }
 
     #[test]

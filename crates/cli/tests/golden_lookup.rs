@@ -10,14 +10,21 @@ fn pardon() -> Command {
     let mut c = Command::cargo_bin("pardon").unwrap();
     let core_tests = env!("CARGO_MANIFEST_DIR").to_string() + "/../core/tests";
     c.env("PARDON_HOME", core_tests.clone() + "/pip_home");
-    c.env("PARDON_CONFIG", core_tests + "/pip_home/no-such-config.toml");
+    c.env(
+        "PARDON_CONFIG",
+        core_tests + "/pip_home/no-such-config.toml",
+    );
     c
 }
 
 #[test]
 fn lookup_hit_exit0_matches_golden() {
     let out = pardon().args(["lookup", "run", "--json"]).unwrap();
-    assert!(out.status.success(), "expected exit 0, got status: {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "expected exit 0, got status: {:?}",
+        out.status
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
         stdout.trim_end(),

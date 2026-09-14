@@ -3,7 +3,9 @@ use rusqlite::Connection;
 use std::io::Read;
 use std::path::Path;
 
-pub struct EcdictDb { conn: Connection }
+pub struct EcdictDb {
+    conn: Connection,
+}
 
 fn card_from_row(row: &rusqlite::Row) -> rusqlite::Result<WordCard> {
     let word: String = row.get(0)?;
@@ -19,10 +21,17 @@ fn card_from_row(row: &rusqlite::Row) -> rusqlite::Result<WordCard> {
     Ok(WordCard {
         found: true,
         word,
-        phonetic: phonetic.filter(|p| !p.is_empty()).map(|p| Phonetic { uk: Some(p), us: None }),
+        phonetic: phonetic.filter(|p| !p.is_empty()).map(|p| Phonetic {
+            uk: Some(p),
+            us: None,
+        }),
         pos: serde_json::from_str::<Vec<PosGloss>>(&pos_json).unwrap_or_default(),
-        definition: definition.split('\n').map(str::trim)
-            .filter(|s| !s.is_empty()).map(String::from).collect(),
+        definition: definition
+            .split('\n')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect(),
         exchange: exchange_json.and_then(|j| serde_json::from_str::<Exchange>(&j).ok()),
         collins: collins.map(|c| c as u8),
         oxford: oxford == 1,
@@ -32,11 +41,14 @@ fn card_from_row(row: &rusqlite::Row) -> rusqlite::Result<WordCard> {
     })
 }
 
-const CARD_COLS: &str = "word, phonetic, definition, translation, pos_json, exchange_json, collins, oxford, tags";
+const CARD_COLS: &str =
+    "word, phonetic, definition, translation, pos_json, exchange_json, collins, oxford, tags";
 
 impl EcdictDb {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
-        Ok(Self { conn: Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)? })
+        Ok(Self {
+            conn: Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?,
+        })
     }
     pub fn from_reader(reader: impl Read) -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
@@ -51,29 +63,46 @@ impl EcdictDb {
         Ok(Self { conn })
     }
     fn query_word(&self, w: &str) -> Option<WordCard> {
-        self.conn.query_row(
-            &format!("SELECT {CARD_COLS} FROM entries WHERE word = ?1 COLLATE NOCASE"),
-            [w], card_from_row).ok()
+        self.conn
+            .query_row(
+                &format!("SELECT {CARD_COLS} FROM entries WHERE word = ?1 COLLATE NOCASE"),
+                [w],
+                card_from_row,
+            )
+            .ok()
     }
 }
 
 impl DictProvider for EcdictDb {
     fn lookup(&self, word: &str) -> Option<WordCard> {
         self.query_word(word).or_else(|| {
-            let lemma: Option<String> = self.conn.query_row(
-                "SELECT lemma FROM wordforms WHERE form = ?1", [word.to_lowercase()],
-                |r| r.get(0)).ok();
+            let lemma: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT lemma FROM wordforms WHERE form = ?1",
+                    [word.to_lowercase()],
+                    |r| r.get(0),
+                )
+                .ok();
             lemma.and_then(|l| self.query_word(&l))
         })
     }
 
     fn suggest(&self, word: &str) -> Vec<String> {
         let prefix: String = word.chars().take(2).collect();
-        let mut stmt = match self.conn.prepare(
-            "SELECT word FROM entries WHERE word LIKE ?1 || '%' LIMIT 800") { Ok(s) => s, Err(_) => return vec![] };
-        let cands: Vec<String> = stmt.query_map([prefix], |r| r.get::<_, String>(0))
-            .map(|rows| rows.flatten().collect()).unwrap_or_default();
-        let mut scored: Vec<(usize, String)> = cands.into_iter()
+        let mut stmt = match self
+            .conn
+            .prepare("SELECT word FROM entries WHERE word LIKE ?1 || '%' LIMIT 800")
+        {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        let cands: Vec<String> = stmt
+            .query_map([prefix], |r| r.get::<_, String>(0))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default();
+        let mut scored: Vec<(usize, String)> = cands
+            .into_iter()
             .map(|c| (levenshtein(word, &c), c))
             .filter(|(d, _)| *d <= 2)
             .collect();
@@ -90,7 +119,8 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     for i in 1..=a.len() {
         cur[0] = i;
         for j in 1..=b.len() {
-            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1)
+            cur[j] = (prev[j] + 1)
+                .min(cur[j - 1] + 1)
                 .min(prev[j - 1] + usize::from(a[i - 1] != b[j - 1]));
         }
         std::mem::swap(&mut prev, &mut cur);

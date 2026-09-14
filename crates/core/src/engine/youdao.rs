@@ -37,7 +37,10 @@ impl YoudaoEngine {
 
     /// 直接注入 base（单测用 wiremock mock 服务）。
     pub fn new_with_base(base: String) -> Self {
-        Self { base, http: reqwest::Client::new() }
+        Self {
+            base,
+            http: reqwest::Client::new(),
+        }
     }
 
     /// 目标语言 → 有道 `type` 参数。
@@ -76,8 +79,10 @@ impl Engine for YoudaoEngine {
             .map_err(|e| EngineError::Network(e.to_string()))?
             .error_for_status()
             .map_err(|e| EngineError::Api(e.to_string()))?;
-        let parsed: YoudaoResponse =
-            resp.json().await.map_err(|e| EngineError::Parse(e.to_string()))?;
+        let parsed: YoudaoResponse = resp
+            .json()
+            .await
+            .map_err(|e| EngineError::Parse(e.to_string()))?;
         let mut out = String::new();
         for seg in parsed.translate_result.into_iter().flatten().flatten() {
             out.push_str(&seg.tgt);

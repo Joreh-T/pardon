@@ -27,9 +27,7 @@ pub enum StreamEvent {
     },
     /// 译文增量。已发增量不回撤（引擎中途失败时兜底全文另作 delta）；
     /// 终态以 Result 事件为准。
-    Delta {
-        text: String,
-    },
+    Delta { text: String },
     /// 终行：字段名对齐 core `Translation`（source/target 为小写语言码）。
     Result {
         source: String,
@@ -39,10 +37,7 @@ pub enum StreamEvent {
         translation: String,
     },
     /// 仅 stderr：机器可读错误（code ∈ internal / engine / timeout）。
-    Error {
-        code: String,
-        message: String,
-    },
+    Error { code: String, message: String },
 }
 
 /// 内部错误出口：stderr 单行 error JSON，退出码 2。序列化保证 message 转义
@@ -55,7 +50,10 @@ pub fn error_exit(e: Error) -> ! {
 /// 契约出口：exit 2 / 124）。序列化理论上不会失败（纯字符串字段），
 /// 兜底串保契约形状。
 pub fn event_exit(code: &str, message: String, exit_code: i32) -> ! {
-    let err = StreamEvent::Error { code: code.to_string(), message };
+    let err = StreamEvent::Error {
+        code: code.to_string(),
+        message,
+    };
     eprintln!(
         "{}",
         serde_json::to_string(&err).unwrap_or_else(|_| {

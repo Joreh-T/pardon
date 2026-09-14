@@ -32,14 +32,25 @@ pub struct AnthropicEngine {
 impl AnthropicEngine {
     pub fn new(cfg: AnthropicConfig) -> Self {
         let name = Box::leak(cfg.id.clone().into_boxed_str());
-        Self { name, cfg, http: reqwest::Client::new() }
+        Self {
+            name,
+            cfg,
+            http: reqwest::Client::new(),
+        }
     }
 
     /// 组装 (system, user) 提示词：Task 10 的常量为默认值，配置可覆盖。
     fn prompts(&self, req: &TranslateRequest) -> (String, String) {
-        let system = self.cfg.system_prompt.as_deref().unwrap_or(DEFAULT_SYSTEM_PROMPT);
+        let system = self
+            .cfg
+            .system_prompt
+            .as_deref()
+            .unwrap_or(DEFAULT_SYSTEM_PROMPT);
         let user = render_user_prompt(
-            self.cfg.user_prompt_template.as_deref().unwrap_or(DEFAULT_USER_TEMPLATE),
+            self.cfg
+                .user_prompt_template
+                .as_deref()
+                .unwrap_or(DEFAULT_USER_TEMPLATE),
             &req.text,
             req.from,
             req.to,
@@ -81,8 +92,10 @@ impl AnthropicEngine {
 
     async fn translate_once(&self, req: &TranslateRequest) -> Result<String, EngineError> {
         let resp = self.post_messages(self.body(req, false)).await?;
-        let resp: serde_json::Value =
-            resp.json().await.map_err(|e| EngineError::Parse(e.to_string()))?;
+        let resp: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| EngineError::Parse(e.to_string()))?;
         resp["content"][0]["text"]
             .as_str()
             .filter(|s| !s.is_empty())
@@ -103,7 +116,9 @@ impl AnthropicEngine {
         let mut stream = resp.bytes_stream().eventsource();
         while let Some(ev) = stream.next().await {
             let ev = ev.map_err(|e| EngineError::Network(e.to_string()))?;
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(&ev.data) else { continue };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&ev.data) else {
+                continue;
+            };
             if v["type"] == "content_block_delta" {
                 if let Some(t) = v["delta"]["text"].as_str() {
                     on_delta(t);
