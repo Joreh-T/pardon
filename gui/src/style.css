@@ -254,6 +254,43 @@ button:hover {
   white-space: nowrap;
 }
 
+/* ── 划词弹窗页（popup.html）──────────────────────────── */
+/* 页面不设 100vh：高度由内容自然撑开，popup.ts 量 body 高度申请
+   窗口自适应（Rust 侧夹 120–480）。#popup-content 的 max-height
+   保证长译文在内容区内部滚动、动作行常驻可见。 */
+.popup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+#popup-content {
+  min-height: 0;
+  max-height: 424px;
+  overflow-y: auto;
+}
+
+/* 弹窗内 card/sentence 之间不再需要主窗口的分隔线余量 */
+#popup-content .card {
+  margin: 0 0 6px;
+}
+
+#popup-content .sentence .row {
+  margin-bottom: 4px;
+}
+
+.popup-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.popup-actions button {
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
 /* ── 启动守护进程兜底按钮（浮于底部中央） ─────────────── */
 #btn-start-daemon {
   position: fixed;

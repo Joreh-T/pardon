@@ -7,8 +7,13 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <h1>pardon</h1>
-    <div id="app"></div>
+    <main class="popup">
+      <div id="popup-content"></div>
+      <div class="popup-actions">
+        <button id="btn-copy" title="复制弹窗内容">复制</button>
+        <button id="btn-speak" title="朗读原文">🔊</button>
+      </div>
+    </main>
     <script type="module" src="/src/popup.ts"></script>
   </body>
 </html>
