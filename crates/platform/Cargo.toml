@@ -9,6 +9,8 @@ async-trait.workspace = true
 anyhow.workspace = true
 log.workspace = true
 notify-rust.workspace = true
+tokio = { workspace = true, features = ["process"] }
+base64.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
