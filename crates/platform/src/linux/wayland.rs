@@ -24,8 +24,14 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdout, Command as AsyncCommand};
 
-/// watch 命令模板（spike Task 2 验证；每事件一行 base64 + '\n'）。
-const WATCH_CMD: &str = "base64 -w0; echo";
+/// 文本 MIME 候选（按优先级回退）。真机发现（2026-09-14）：WezTerm 等应用
+/// 只通告 `text/plain;charset=utf-8`，精确请求 `text/plain` 会「无文本」；
+/// wl-copy 通告全套，X11 应用常只有 `UTF8_STRING`。
+const TEXT_MIMES: [&str; 3] = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"];
+/// watch 命令模板：监听任意类型的变更，命令内按 TEXT_MIMES 回退取文本；
+/// 无文本类型时输出空行（被解码层过滤）。每事件恰一行 base64 + '\n'。
+/// 注意 `$(...)` 会吞尾部换行——上游本就按 trim 语义处理，无碍。
+const WATCH_CMD: &str = "for t in \"text/plain;charset=utf-8\" text/plain UTF8_STRING; do if out=$(wl-paste -t \"$t\" 2>/dev/null); then printf '%s' \"$out\" | base64 -w0; echo; exit 0; fi; done; echo";
 /// 启动帧丢弃窗口（毫秒）：watcher 启动后立即回显既有剪贴板内容，实测
 /// 亚百毫秒到达；窗口取 300ms 留裕量。窗口内到达的非空帧一律丢弃。
 const INITIAL_FRAME_WINDOW_MS: u64 = 300;
@@ -100,8 +106,10 @@ impl WaylandMonitor {
     async fn ensure_session(&mut self) -> anyhow::Result<&mut MonitorSession> {
         if self.session.is_none() {
             let mut child = AsyncCommand::new(&self.wl_paste)
-                // 参数顺序关键：--watch 吞掉其后全部 argv（spike 发现 1）
-                .args(["--type", "text/plain", "--watch", "sh", "-c", WATCH_CMD])
+                // 参数顺序关键：--watch 吞掉其后全部 argv（spike 发现 1）。
+                // 不在外层限定 --type：类型协商交给 WATCH_CMD 内层，避免
+                // WezTerm 等只通告 charset 变体的应用被整类过滤。
+                .args(["--watch", "sh", "-c", WATCH_CMD])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .kill_on_drop(true)
@@ -171,25 +179,26 @@ impl WaylandClipboard {
     }
 
     fn read(&self, primary: bool) -> anyhow::Result<String> {
-        let mut cmd = Command::new(&self.wl_paste);
-        cmd.args(["--no-newline", "--type", "text/plain"]);
-        if primary {
-            cmd.arg("--primary");
+        // 按候选顺序回退请求（见 TEXT_MIMES：WezTerm 只通告 charset 变体）。
+        let mut last_err = String::new();
+        for mime in TEXT_MIMES {
+            let mut cmd = Command::new(&self.wl_paste);
+            cmd.args(["--no-newline", "--type", mime]);
+            if primary {
+                cmd.arg("--primary");
+            }
+            let out = cmd
+                .output()
+                .with_context(|| format!("spawn {}", self.wl_paste.display()))?;
+            if out.status.success() {
+                return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+            }
+            last_err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         }
-        let out = cmd
-            .output()
-            .with_context(|| format!("spawn {}", self.wl_paste.display()))?;
-        if !out.status.success() {
-            // 「无文本/空剪贴板」与真实错误统一报错；daemon 侧按 stderr
-            // 关键字（not available as requested type 等，spike 发现 5）
-            // 区分为「无文本」而非 503。
-            bail!(
-                "wl-paste failed ({}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        // 全部候选失败 =「无文本/空剪贴板」或真实错误；daemon 侧按 stderr
+        // 关键字（not available as requested type 等，spike 发现 5）
+        // 区分为「无文本」而非 503。
+        bail!("wl-paste failed (no text type offered): {last_err}")
     }
 }
 
@@ -317,6 +326,36 @@ mod tests {
         let e = c.read_clipboard().unwrap_err();
         let msg = format!("{e:#}");
         assert!(msg.contains("No suitable type"), "msg: {msg}");
+    }
+
+    /// WezTerm 式通告：charset 变体报错 → 回退到 text/plain 命中。
+    #[test]
+    fn read_falls_back_across_text_mimes() {
+        let _exec = EXEC_LOCK.blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let paste = fake_bin(
+            dir.path(),
+            "wl-paste",
+            r#"case " $* " in *"charset=utf-8"*) echo 'nope' >&2; exit 1;; *) printf 'via-plain';; esac"#,
+        );
+        let copy = fake_bin(dir.path(), "wl-copy", ":");
+        let c = WaylandClipboard::with_bins(paste, copy);
+        assert_eq!(c.read_clipboard().unwrap(), "via-plain");
+    }
+
+    /// X11 兼容通告：前两个候选失败，UTF8_STRING 命中。
+    #[test]
+    fn read_falls_back_to_x11_string_mime() {
+        let _exec = EXEC_LOCK.blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let paste = fake_bin(
+            dir.path(),
+            "wl-paste",
+            r#"case " $* " in *"charset=utf-8"*|*" text/plain "*) exit 1;; *) printf 'via-x11';; esac"#,
+        );
+        let copy = fake_bin(dir.path(), "wl-copy", ":");
+        let c = WaylandClipboard::with_bins(paste, copy);
+        assert_eq!(c.read_clipboard().unwrap(), "via-x11");
     }
 
     #[test]
