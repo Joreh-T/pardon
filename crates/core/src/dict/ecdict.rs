@@ -106,56 +106,103 @@ pub mod import {
             for rec in rdr.records() {
                 let rec = rec.context("read csv record")?;
                 let row: Vec<&str> = rec.iter().collect();
-                let Some(card) = row_to_card(&row) else { continue };
-                let pos_json = serde_json::to_string(&card.pos).unwrap();
-                let ex_json = card
-                    .exchange
-                    .as_ref()
-                    .map(|e| serde_json::to_string(e).unwrap());
-                let changed = conn.execute(
-                    "INSERT OR IGNORE INTO entries VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-                    rusqlite::params![
-                        card.word,
-                        row.get(1).copied().unwrap_or(""),
-                        row.get(2).copied().unwrap_or(""),
-                        row.get(3).copied().unwrap_or(""),
-                        pos_json,
-                        ex_json,
-                        card.collins,
-                        card.oxford as i64,
-                        card.tags.join(" "),
-                        row.get(8).and_then(|s| s.parse().ok()).unwrap_or(0i64),
-                        row.get(9).and_then(|s| s.parse().ok()).unwrap_or(0i64),
-                    ],
-                )?;
-                if changed == 1 {
-                    inserted += 1;
-                    if let Some(ex) = &card.exchange {
-                        for form in [
-                            ex.past.as_deref(),
-                            ex.pp.as_deref(),
-                            ex.ing.as_deref(),
-                            ex.third.as_deref(),
-                            ex.comparative.as_deref(),
-                            ex.superlative.as_deref(),
-                            ex.plural.as_deref(),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        {
-                            let _ = conn.execute(
-                                "INSERT OR IGNORE INTO wordforms VALUES (?1, ?2)",
-                                rusqlite::params![form, card.word],
-                            );
-                        }
-                    }
-                }
+                inserted += insert_row(conn, &row)?;
             }
             Ok(())
         })();
         conn.execute_batch("COMMIT")?;
         result?;
         Ok(inserted)
+    }
+
+    /// 从官方 ECDICT SQLite 发布包导入（表 `stardict`，含 id/sw 附加列，
+    /// 其余 13 列与 CSV 列序一致；collins/oxford/bnc/frq 为 INTEGER，NULL 视为空）。
+    pub fn import_sqlite(src: &std::path::Path, conn: &Connection) -> anyhow::Result<u64> {
+        use anyhow::Context;
+        create_schema(conn).context("create schema")?;
+        let src_conn = Connection::open_with_flags(
+            src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ).with_context(|| format!("open official ecdict sqlite {}", src.display()))?;
+        let mut stmt = src_conn.prepare(
+            "SELECT word, phonetic, definition, translation, pos, collins, oxford, tag, \
+             bnc, frq, exchange, detail, audio FROM stardict",
+        ).context("select from stardict (官方库缺少 stardict 表？)")?;
+        let mut rows = stmt.query([])?;
+        conn.execute_batch("BEGIN")?;
+        let mut inserted = 0u64;
+        let result = (|| -> anyhow::Result<()> {
+            while let Some(r) = rows.next()? {
+                // 全部列转字符串（INTEGER 列 NULL → ""），复用 CSV 路径的行处理
+                let row: Vec<String> = (0..13)
+                    .map(|i| {
+                        r.get_ref(i).map(|v| match v {
+                            rusqlite::types::ValueRef::Null => String::new(),
+                            rusqlite::types::ValueRef::Integer(n) => n.to_string(),
+                            rusqlite::types::ValueRef::Text(t) => {
+                                String::from_utf8_lossy(t).into_owned()
+                            }
+                            _ => String::new(),
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+                let refs: Vec<&str> = row.iter().map(String::as_str).collect();
+                inserted += insert_row(conn, &refs)?;
+            }
+            Ok(())
+        })();
+        conn.execute_batch("COMMIT")?;
+        result?;
+        Ok(inserted)
+    }
+
+    /// 插入单条 13 列行（返回 0=已存在跳过，1=新插入）；负责 entries + wordforms。
+    fn insert_row(conn: &Connection, row: &[&str]) -> anyhow::Result<u64> {
+        let Some(card) = row_to_card(row) else { return Ok(0) };
+        let pos_json = serde_json::to_string(&card.pos).unwrap();
+        let ex_json = card
+            .exchange
+            .as_ref()
+            .map(|e| serde_json::to_string(e).unwrap());
+        let changed = conn.execute(
+            "INSERT OR IGNORE INTO entries VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            rusqlite::params![
+                card.word,
+                row.get(1).copied().unwrap_or(""),
+                row.get(2).copied().unwrap_or(""),
+                row.get(3).copied().unwrap_or(""),
+                pos_json,
+                ex_json,
+                card.collins,
+                card.oxford as i64,
+                card.tags.join(" "),
+                row.get(8).and_then(|s| s.parse().ok()).unwrap_or(0i64),
+                row.get(9).and_then(|s| s.parse().ok()).unwrap_or(0i64),
+            ],
+        )?;
+        if changed == 1 {
+            if let Some(ex) = &card.exchange {
+                for form in [
+                    ex.past.as_deref(),
+                    ex.pp.as_deref(),
+                    ex.ing.as_deref(),
+                    ex.third.as_deref(),
+                    ex.comparative.as_deref(),
+                    ex.superlative.as_deref(),
+                    ex.plural.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO wordforms VALUES (?1, ?2)",
+                        rusqlite::params![form, card.word],
+                    );
+                }
+            }
+            Ok(1)
+        } else {
+            Ok(0)
+        }
     }
 }
 

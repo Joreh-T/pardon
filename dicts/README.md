@@ -19,20 +19,32 @@ cargo build --release -p pardon-core --bin pardon-import
 
 ## ECDICT（英→中，340 万词）
 
+**release 不提供 CSV 打包**（官方资产为 sqlite/stardict/mdx/eudic/mobi），
+推荐直接用 SQLite 版：
+
 1. 下载 release: <https://github.com/skywind3000/ECDICT/releases>
-   选 `ecdict-csv-28.zip`（或更新版本的 csv 包——sqlite 版不必下，csv
-   版由我们的导入器自己建索引）。
-2. 解压出 `ecdict.csv`。
+   选 `ecdict-sqlite-28.zip`（206MB，或更新版本的 sqlite 包）。
+2. 解压出 `ecdict.db`（官方库，表名 `stardict`，含 id/sw 附加列——
+   导入器会跳过它们并重建我们自己的索引与词形反向表）。
 3. 导入（先确保目标目录存在，导入器不会自动建目录）：
 
 ```bash
 mkdir -p ~/.local/share/pardon/dict
-cargo run -p pardon-core --release --bin pardon-import -- \
-  ecdict.csv ~/.local/share/pardon/dict/ecdict.sqlite
+cargo run -p pardon-core --release --bin pardon-import -- --ecdict-sqlite \
+  ecdict.db ~/.local/share/pardon/dict/ecdict.sqlite
 ```
 
 成功时输出 `imported <行数> entries into …`（全量约 340 万行，随版本略有
 出入）。
+
+**轻量备选（基础版 CSV，约 76 万词）**：官方仓库内的 `ecdict.csv` 是基础版，
+直接走 CSV 模式：
+
+```bash
+curl -L -o ecdict.csv https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv
+cargo run -p pardon-core --release --bin pardon-import -- \
+  ecdict.csv ~/.local/share/pardon/dict/ecdict.sqlite
+```
 
 ## CC-CEDICT（中→英，带拼音）
 
@@ -50,8 +62,9 @@ cargo run -p pardon-core --release --bin pardon-import -- --cedict \
 ## 导入器用法速查
 
 ```
-pardon-import <ecdict.csv> <out.sqlite>          # ECDICT 模式
-pardon-import --cedict <cedict.u8> <out.sqlite>  # CC-CEDICT 模式
+pardon-import --ecdict-sqlite <官方ecdict.db> <out.sqlite>  # ECDICT release sqlite 版（推荐）
+pardon-import <ecdict.csv> <out.sqlite>                     # ECDICT CSV（仓库基础版 76 万词）
+pardon-import --cedict <cedict.u8> <out.sqlite>             # CC-CEDICT 模式
 ```
 
 导入器会新建/覆盖目标 sqlite 文件并自建表与索引；父目录必须已存在。
