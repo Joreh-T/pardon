@@ -57,29 +57,21 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
     let translation = state.translator.translate(text).await;
     state.counters.translations.fetch_add(1, Ordering::Relaxed);
 
-    // 分三种通知形态：词典命中（词路由）→ 完整词卡（音标+词形）；
-    // 词典未收录 → suggestions 提示（"runnign → 试试 running"）；
-    // 句子/LLM → 译文本身（无音标信息）。
+    // 词典命中（Word 路由）→ 完整词卡通知（音标+词形+可选徽章）；
+    // 非词典结果 → 通用通知；文本为英文词形（≤2 词）且词典建议非空时，
+    // 把「未收录；试试：…」追加为译文后的尾行（LLM 纠错译文与建议共存）。
     let dict_sourced = translation.engine == "ecdict" || translation.engine == "cedict";
-    let (summary, body) = if !translation.translation.is_empty() && dict_sourced {
+    let (summary, body) = if dict_sourced && !translation.translation.is_empty() {
         let card = state.translator.lookup(&translation.text).await;
         format_word_notification(&card, state.cfg.daemon.show_word_badge)
-    } else if translation.translation.is_empty() && dict_sourced {
-        let card = state.translator.lookup(&translation.text).await;
-        let miss_hint = if card.suggestions.is_empty() {
-            None
+    } else {
+        let miss_hint = if is_word_shaped_en(&translation.text) {
+            let card = state.translator.lookup(&translation.text).await;
+            suggestion_hint(&card)
         } else {
-            let shown: Vec<String> = card
-                .suggestions
-                .iter()
-                .take(MAX_SUGGESTIONS)
-                .cloned()
-                .collect();
-            Some(format!("未收录；试试：{}", shown.join("、")))
+            None
         };
         format_notification(&translation, miss_hint.as_deref())
-    } else {
-        format_notification(&translation, None)
     };
     // notify 是同步 D-Bus 往返（notify-rust 超时可至 ~25s）→ 挪到 blocking
     // 线程，避免卡住 runtime worker 与串行剪贴板消费循环（join 失败视同
@@ -119,18 +111,45 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
     }
 }
 
-/// 通知文案（句子/通用）：摘要 = 原文截断；正文 = 译文
-/// （或失败/未收录提示）。摘要不带前缀——通知标题行只承载内容本身，
-/// 品牌名不与单词/译文混排。
+/// 英文词形判定：非中文且 ≤2 个空白分隔词（对齐 router::classify 的
+/// 单词/两词回退边界；中文侧 CEDICT 无建议来源，直接排除）。
+fn is_word_shaped_en(text: &str) -> bool {
+    pardon_core::lang::detect(text) != pardon_core::lang::Lang::Zh
+        && text.split_whitespace().count() <= 2
+}
+
+/// 词卡建议行：`未收录；试试：a、b`（最多 MAX_SUGGESTIONS 个）；无建议 None。
+fn suggestion_hint(card: &pardon_core::dict::WordCard) -> Option<String> {
+    if card.suggestions.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = card
+        .suggestions
+        .iter()
+        .take(MAX_SUGGESTIONS)
+        .cloned()
+        .collect();
+    Some(format!("未收录；试试：{}", shown.join("、")))
+}
+
+/// 通知文案（句子/通用）：摘要 = 原文截断；正文 = 译文（词形
+/// 未收录时追加「试试」尾行）、失败或未收录提示。摘要不带前缀——
+/// 通知标题行只承载内容本身，品牌名不与单词/译文混排。
 pub fn format_notification(tr: &Translation, miss_hint: Option<&str>) -> (String, String) {
     let summary = truncate_chars(&tr.text, SUMMARY_MAX_CHARS);
-    let body = if !tr.translation.is_empty() {
+    let mut body = if !tr.translation.is_empty() {
         truncate_chars(&tr.translation, BODY_MAX_CHARS)
     } else if tr.engine.is_empty() {
         "翻译失败（引擎链全部失败）".to_string()
     } else {
         miss_hint.unwrap_or("未收录").to_string()
     };
+    if !tr.translation.is_empty() {
+        if let Some(hint) = miss_hint {
+            body.push('\n');
+            body.push_str(hint);
+        }
+    }
     (summary, body)
 }
 
@@ -344,13 +363,13 @@ mod tests {
         assert!(matches!(second, HandleResult::Skipped("duplicate")));
     }
 
-    /// 4. 词典未收录（engine=ecdict、译文空）→ 通知正文带「试试」建议。
+    /// 4a. 词形 LLM 结果（拼错词）→ 通知正文 = 译文 + 「试试」尾行。
     #[tokio::test]
-    async fn word_miss_notification_includes_suggestions() {
+    async fn word_shaped_llm_result_appends_suggestions() {
         let ft = FakeTranslator::new();
         ft.results.lock().unwrap().push((
             "runnign".into(),
-            FakeTranslator::sentence("runnign", "", "ecdict"),
+            FakeTranslator::sentence("runnign", "(LLM 认为你想说 running)", "glm"),
         ));
         *ft.lookup_card.lock().unwrap() = word_card_suggestions(&["running", "run"]);
         let no = Arc::new(FakeNotifier::default());
@@ -360,16 +379,63 @@ mod tests {
             Arc::new(FakeClipboard::default()),
             base_cfg(),
         );
-        let r = handle_text(&s, "runnign", Origin::Auto).await;
-        match r {
-            HandleResult::Handled { .. } => {}
-            HandleResult::Skipped(w) => panic!("expected Handled, got Skipped({w})"),
-        }
+        handle_text(&s, "runnign", Origin::Trigger).await;
         let sent = no.sent.lock().unwrap();
         assert_eq!(sent.len(), 1);
-        let body = &sent[0].1;
-        assert!(body.contains("running"), "body missing suggestion: {body}");
-        assert!(body.contains("试试"), "body missing 试试: {body}");
+        assert!(
+            sent[0].1.contains("(LLM 认为你想说 running)"),
+            "译文仍在: {}",
+            sent[0].1
+        );
+        assert!(
+            sent[0].1.ends_with("未收录；试试：running、run"),
+            "尾行应为建议: {}",
+            sent[0].1
+        );
+    }
+
+    /// 4b. 句子（>2 词）不查建议、无尾行。
+    #[tokio::test]
+    async fn sentence_result_has_no_suggestion_line() {
+        let ft = Arc::new(FakeTranslator::new());
+        ft.results.lock().unwrap().push((
+            "please give me the book quickly".into(),
+            FakeTranslator::sentence("please give me the book quickly", "请把书快给我", "glm"),
+        ));
+        *ft.lookup_card.lock().unwrap() = word_card_suggestions(&["running"]);
+        let no = Arc::new(FakeNotifier::default());
+        let s = test_state(
+            ft.clone(),
+            no.clone(),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        handle_text(&s, "please give me the book quickly", Origin::Auto).await;
+        let sent = no.sent.lock().unwrap();
+        assert_eq!(sent[0].1, "请把书快给我", "不应有建议尾行: {}", sent[0].1);
+        // lookup 不应被调用（句子不做建议查询）
+        assert!(ft.lookup_card_calls.load(Ordering::Relaxed) == 0);
+    }
+
+    /// 4c. 中文词形不走建议（CEDICT 无 suggest 来源）。
+    #[tokio::test]
+    async fn chinese_text_skips_suggestion_lookup() {
+        let ft = Arc::new(FakeTranslator::new());
+        ft.results.lock().unwrap().push((
+            "吃饭了".into(),
+            FakeTranslator::sentence("吃饭了", "have eaten", "glm"),
+        ));
+        let no = Arc::new(FakeNotifier::default());
+        let s = test_state(
+            ft.clone(),
+            no.clone(),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        handle_text(&s, "吃饭了", Origin::Auto).await;
+        let sent = no.sent.lock().unwrap();
+        assert_eq!(sent[0].1, "have eaten");
+        assert!(ft.lookup_card_calls.load(Ordering::Relaxed) == 0);
     }
 
     /// 5. 引擎链全失败（译文与引擎皆空）→ 通知正文「翻译失败」。

@@ -18,6 +18,8 @@ pub struct FakeTranslator {
     pub(crate) lookup_card: Mutex<WordCard>,
     pub(crate) delay_ms: u64,
     pub(crate) calls: Mutex<Vec<String>>,
+    /// lookup 调用次数（handler 建议查询可达性断言用）。
+    pub(crate) lookup_card_calls: std::sync::atomic::AtomicUsize,
     mapper: Option<Mapper>,
 }
 
@@ -40,6 +42,7 @@ impl FakeTranslator {
             }),
             delay_ms: 0,
             calls: Mutex::new(vec![]),
+            lookup_card_calls: std::sync::atomic::AtomicUsize::new(0),
             mapper: None,
         }
     }
@@ -102,6 +105,8 @@ impl Translator for FakeTranslator {
         r.unwrap_or_else(|| Self::sentence(text, "（译文）", "glm"))
     }
     async fn lookup(&self, word: &str) -> WordCard {
+        self.lookup_card_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut c = self.lookup_card.lock().unwrap().clone();
         c.word = word.to_string();
         c
