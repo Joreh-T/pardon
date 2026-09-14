@@ -206,3 +206,53 @@ async fn subscriber_receives_popup_event() {
     assert_eq!(ev["params"]["translation"]["text"], "hello");
     std::env::remove_var("PARDON_IPC_SOCK");
 }
+
+/// 订阅连接断开后：广播 Receiver（gui_connected）回到 0、无接收者时
+/// events.send 返回 Err（popup 回退桌面通知的判据）——转发任务不得泄漏。
+#[tokio::test]
+async fn disconnecting_subscriber_releases_receiver_and_send_fails() {
+    let _l = SOCK_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("ipc.sock");
+    std::env::set_var("PARDON_IPC_SOCK", &sock);
+    let state = test_state(AppConfig::default(), None);
+    spawn_serve(&state, sock.clone()).await;
+
+    // 连接 A：subscribe
+    let stream = connect(&sock).await;
+    let (r, mut w) = tokio::io::split(stream);
+    let mut lines = BufReader::new(r).lines();
+    send(&mut w, r#"{"id":1,"method":"subscribe","params":{}}"#).await;
+    let v = recv(&mut lines).await;
+    assert!(v["ok"].as_bool().unwrap(), "{v}");
+    assert_eq!(state.events.receiver_count(), 1, "{v}");
+
+    // 断开 A（两半都 drop 才关流 → 服务端读到 EOF）
+    drop(w);
+    drop(lines);
+
+    // receiver_count 应回 0（转发任务被 abort；泄漏时永不归零）
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    while state.events.receiver_count() > 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "subscriber receiver leaked after disconnect"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    // 无接收者 → send Err：死订阅者不得让 popup 误判「已送达」
+    assert!(state
+        .events
+        .send(r#"{"event":"popup","params":{}}"#.to_string())
+        .is_err());
+
+    // 契约面复核：新连接查 status，gui_connected=0
+    let stream = connect(&sock).await;
+    let (r, mut w) = tokio::io::split(stream);
+    let mut lines = BufReader::new(r).lines();
+    send(&mut w, r#"{"id":2,"method":"status","params":{}}"#).await;
+    let v = recv(&mut lines).await;
+    assert_eq!(v["result"]["gui_connected"], 0, "{v}");
+    std::env::remove_var("PARDON_IPC_SOCK");
+}

@@ -101,14 +101,23 @@ async fn handle_conn(state: Arc<DaemonState>, stream: interprocess::local_socket
             }
         }
     });
+    // subscribe 的转发任务句柄：转发任务持有 tx 克隆与 broadcast Receiver，
+    // 断连后必须由本方 abort（见读循环后的收尾）——它自己不会退出
+    let mut forward: Option<tokio::task::JoinHandle<()>> = None;
     while let Ok(Some(line)) = lines.next_line().await {
         let resp: String = match serde_json::from_str::<Request>(&line) {
-            Ok(req) => dispatch(&state, &tx, req).await,
+            Ok(req) => dispatch(&state, &tx, &mut forward, req).await,
             Err(e) => err_line(0, &format!("bad request: {e}")),
         };
         let _ = tx.send(resp);
     }
-    // 写任务随 tx 关闭退出；订阅转发任务的 tx 克隆随任务结束丢弃
+    // 断连（EOF）：先 abort 转发任务——任务丢弃即释放 broadcast Receiver
+    // （gui_connected 立减）与 tx 克隆；再丢本方 tx → 写任务 recv 返回
+    // None 退出 → await 收尾。不 abort 则三任务 + 流两半泄漏，直到其后
+    // 两个广播事件（写失败、tx.send 失败）才逐个解体
+    if let Some(h) = forward.take() {
+        h.abort();
+    }
     drop(tx);
     let _ = writer.await;
 }
@@ -116,6 +125,7 @@ async fn handle_conn(state: Arc<DaemonState>, stream: interprocess::local_socket
 async fn dispatch(
     state: &Arc<DaemonState>,
     tx: &tokio::sync::mpsc::UnboundedSender<String>,
+    forward: &mut Option<tokio::task::JoinHandle<()>>,
     req: Request,
 ) -> String {
     match req.method.as_str() {
@@ -204,9 +214,13 @@ async fn dispatch(
             Err(e) => err_line(req.id, &format!("{e:#}")),
         },
         "subscribe" => {
+            // 重复 subscribe：abort 旧转发任务再换新（句柄只有一个，不留泄漏路径）
+            if let Some(old) = forward.take() {
+                old.abort();
+            }
             let mut rx = state.events.subscribe();
             let tx = tx.clone();
-            tokio::spawn(async move {
+            *forward = Some(tokio::spawn(async move {
                 loop {
                     match rx.recv().await {
                         Ok(line) => {
@@ -218,7 +232,7 @@ async fn dispatch(
                         Err(_) => break,
                     }
                 }
-            });
+            }));
             ok_line(req.id, serde_json::json!({}))
         }
         other => err_line(req.id, &format!("unknown method {other:?}")),
