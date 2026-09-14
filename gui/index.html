@@ -1,14 +1,26 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>pardon</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <h1>pardon</h1>
-    <div id="app"></div>
+    <main class="app">
+      <header>
+        <span id="conn">连接中…</span>
+        <button id="btn-settings" title="设置">⚙</button>
+      </header>
+      <div class="input-row">
+        <textarea id="input" rows="3" placeholder="输入或粘贴文本，Enter 翻译（Shift+Enter 换行）"></textarea>
+        <button id="btn-translate">翻译</button>
+      </div>
+      <div id="result"><div class="empty">输入文本开始翻译</div></div>
+      <div class="toolbar"><button id="btn-speak">🔊 发音</button></div>
+      <aside id="history"><div class="empty">历史加载中…</div></aside>
+    </main>
+    <!-- #btn-start-daemon 默认隐藏；refreshStatus 失败时 main.ts 置 hidden=false -->
+    <button id="btn-start-daemon" hidden>启动 pardond</button>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

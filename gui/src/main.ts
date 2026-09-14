@@ -1,6 +1,84 @@
+import { listen } from '@tauri-apps/api/event';
+import { historyList, lookup, status, translate } from './api';
+import { escapeHtml, renderCardHTML, renderHistoryHTML, renderTranslationHTML } from './render';
+import type { HistoryEntry } from './types';
+import { invoke } from '@tauri-apps/api/core';
 import './style.css';
 
-// 占位：Task 8 实现主窗口（翻译输入、历史列表、连接状态指示）。
-document.querySelector<HTMLElement>('#app')?.replaceChildren(
-  document.createTextNode('main window scaffold — task 8'),
-);
+const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
+const $input = () => document.querySelector<HTMLTextAreaElement>('#input')!;
+
+let historyEntries: HistoryEntry[] = [];
+
+async function refreshHistory(): Promise<void> {
+  try {
+    historyEntries = await historyList(50);
+    $('#history').innerHTML = renderHistoryHTML(historyEntries);
+  } catch {
+    $('#history').innerHTML = '<div class="empty">历史不可用</div>';
+  }
+}
+
+async function doTranslate(text: string): Promise<void> {
+  const t = text.trim();
+  if (!t) return;
+  $('#result').innerHTML = '<div class="empty">翻译中…</div>';
+  // 词卡与翻译并行；词卡命中则上方展示（句子翻译只有译文区）
+  const [t2, card] = await Promise.allSettled([translate(t), lookup(t)]);
+  if (t2.status === 'rejected') {
+    $('#result').innerHTML = `<div class="empty fail">${escapeHtml(String(t2.reason))}</div>`;
+    return;
+  }
+  let html = '';
+  if (card.status === 'fulfilled' && card.value.found) html += renderCardHTML(card.value);
+  html += renderTranslationHTML(t2.value);
+  $('#result').innerHTML = html;
+  void refreshHistory();
+}
+
+async function refreshStatus(): Promise<void> {
+  try {
+    const s = await status();
+    $('#conn').textContent = `已连接 pardond ${s.version} · 引擎 ${s.default_engine}`;
+    $('#btn-start-daemon').hidden = true;
+  } catch {
+    $('#conn').textContent = '未连接 pardond';
+    $('#btn-start-daemon').hidden = false;
+  }
+}
+
+function wire(): void {
+  $('#btn-translate').addEventListener('click', () => void doTranslate($input().value));
+  $input().addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      void doTranslate($input().value);
+    }
+  });
+  $('#btn-settings').addEventListener('click', () => void invoke('open_settings'));
+  $('#btn-start-daemon').addEventListener('click', async () => {
+    await invoke('pardon_daemon_start');
+    setTimeout(() => void refreshStatus(), 1500);
+  });
+  $('#btn-speak').addEventListener('click', () => {
+    const src = document.querySelector<HTMLElement>('#result .src')?.textContent;
+    if (src) void invoke('speak', { text: src });
+  });
+  $('#history').addEventListener('click', (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>('.hist-item');
+    if (!item) return;
+    const entry = historyEntries[Number(item.dataset.idx)];
+    if (entry) {
+      $input().value = entry.text;
+      void doTranslate(entry.text);
+    }
+  });
+  void listen('ipc-up', () => void refreshStatus());
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  wire();
+  void refreshStatus();
+  void refreshHistory();
+  setInterval(() => void refreshStatus(), 5000);
+});

@@ -23,6 +23,28 @@ async fn speak(text: String) -> Result<(), String> {
         .map_err(|e| format!("spawn `pardon speak`: {e}"))
 }
 
+/// 兜底启动：主窗口检测到未连接 pardond 时显示按钮，经 CLI 分离启动
+/// （`pardon daemon start` 内部 spawn 独立进程组后立即返回，不会挂起）。
+#[tauri::command]
+async fn pardon_daemon_start() -> Result<String, String> {
+    let out = std::process::Command::new("pardon")
+        .args(["daemon", "start"])
+        .output()
+        .map_err(|e| format!("spawn `pardon daemon start`: {e}"))?;
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+#[tauri::command]
+fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        Ok(())
+    } else {
+        create_settings_window(&app).map_err(|e| e.to_string())
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -39,7 +61,12 @@ fn main() {
                 }
             }
         }))
-        .invoke_handler(tauri::generate_handler![ipc_request, speak])
+        .invoke_handler(tauri::generate_handler![
+            ipc_request,
+            speak,
+            pardon_daemon_start,
+            open_settings
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
