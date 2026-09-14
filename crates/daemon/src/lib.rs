@@ -1,6 +1,7 @@
 //! pardon-daemon 库面：供集成测试（tests/）与 main 复用。
 
 pub mod clip;
+pub mod events;
 pub mod handler;
 pub mod http;
 pub mod state;
@@ -8,6 +9,7 @@ pub mod state;
 /// cfg(test) 模块对外不可见）；doc(hidden) 使其不出现在文档。
 #[doc(hidden)]
 pub mod testing;
+pub mod watcher;
 
 use anyhow::Context;
 use clap::Parser;
@@ -25,8 +27,9 @@ pub struct Args {
     pub log_notify: bool,
 }
 
-/// 启动 daemon。config 只在启动时读一次（引擎名 Box::leak 会随 Pipeline
-/// 重建累积，热重载被有意排除——改配置请重启服务，spec M2 约束）。
+/// 启动 daemon。`[daemon]` 配置段支持热重载（[`apply_config`]）；引擎字段
+/// （default_engine/[llm]）不热应用——引擎名 Box::leak 会随 Pipeline 重建
+/// 累积，引擎变更需重启服务（spec M2 约束）。
 pub async fn run(args: Args) -> anyhow::Result<()> {
     let cfg = pardon_core::config::load().map_err(|e| {
         anyhow::anyhow!(
@@ -66,11 +69,25 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             }
         };
 
+    // 翻译历史：打开失败 → None 降级（不影响翻译）
+    let history = match pardon_core::history::History::open(&pardon_core::history::history_path()?)
+    {
+        Ok(h) => Some(Arc::new(tokio::sync::Mutex::new(h))),
+        Err(e) => {
+            log::warn!("history unavailable: {e:#}");
+            None
+        }
+    };
+    // 事件广播：不留占位接收者——send 在无 UDS 订阅者时报错，正是
+    // popup 回退桌面通知的判据（Task 5 起每个 GUI 连接订阅一路）。
+    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
+    let (watcher_stop, _) = tokio::sync::watch::channel(false);
+
     let state = Arc::new(state::DaemonState {
         guard: tokio::sync::Mutex::new(pardon_core::loopguard::LoopGuard::new(
             std::time::Duration::from_millis(cfg.daemon.dedup_window_ms),
         )),
-        cfg,
+        cfg: std::sync::RwLock::new(cfg),
         started: std::time::Instant::now(),
         translator,
         notifier,
@@ -78,23 +95,18 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         counters: Default::default(),
         clipboard_watching: std::sync::atomic::AtomicBool::new(false),
         shutdown: Arc::new(tokio::sync::Notify::new()),
+        watcher_stop,
+        history,
+        events: events_tx,
     });
 
-    if state.cfg.daemon.auto_translate {
-        match pardon_platform::linux::WaylandMonitor::new() {
-            Ok(m) => {
-                clip::start(state.clone(), Box::new(m)).await?;
-                state
-                    .clipboard_watching
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                log::info!("clipboard watching enabled");
-            }
-            Err(e) => {
-                log::warn!("clipboard watching disabled: {e:#} (http trigger still available)")
-            }
-        }
-    } else {
-        log::info!("auto_translate off");
+    // 剪贴板监听开关统一走 watcher 入口（wl-clipboard 缺失 → 降级 warn，
+    // HTTP 触发口仍可用）
+    let auto = state.cfg_snapshot().daemon.auto_translate;
+    match watcher::set_enabled(&state, auto).await {
+        Ok(()) if auto => log::info!("clipboard watching enabled"),
+        Ok(()) => log::info!("auto_translate off"),
+        Err(e) => log::warn!("clipboard watching disabled: {e:#} (http trigger still available)"),
     }
 
     let listener = tokio::net::TcpListener::bind(bind)
@@ -123,4 +135,27 @@ async fn shutdown_signal(state: Arc<state::DaemonState>) {
         _ = term.recv() => {},
         _ = state.shutdown.notified() => {},
     }
+}
+
+/// 应用磁盘新配置：`[daemon]` 字段热生效（含监听开关）；引擎字段
+/// （default_engine/[llm]）不热应用，返回 restart_required=true。
+pub async fn apply_config(state: &Arc<state::DaemonState>) -> anyhow::Result<bool> {
+    let fresh = pardon_core::config::load()?;
+    // 写锁收口在同步段（不跨 await；set_enabled 内部自己拿 cfg_snapshot）
+    let (restart_required, auto_fresh) = {
+        let mut cur = state.cfg.write().expect("cfg lock poisoned");
+        let restart_required = fresh.default_engine != cur.default_engine || fresh.llm != cur.llm;
+        let auto_fresh = fresh.daemon.auto_translate;
+        cur.daemon = fresh.daemon;
+        (restart_required, auto_fresh)
+    };
+    let auto_now = state
+        .clipboard_watching
+        .load(std::sync::atomic::Ordering::Acquire);
+    if auto_fresh != auto_now {
+        if let Err(e) = watcher::set_enabled(state, auto_fresh).await {
+            log::warn!("watcher toggle after reload failed: {e:#}");
+        }
+    }
+    Ok(restart_required)
 }

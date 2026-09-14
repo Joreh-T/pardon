@@ -39,13 +39,25 @@ pub async fn start_with_backoff(
         }
     });
 
-    // 消费任务：串行处理；处理期间堆积的事件只保留最新（快速连续复制合并）
+    // 消费任务：串行处理；处理期间堆积的事件只保留最新（快速连续复制合并）。
+    // select watcher_stop：托盘/reload 实时停用监听时请求退出（spawn 前订阅，
+    // 确保停用方在 start 之后的信号翻转必被捕获；值仍为 false 时继续循环）。
+    let mut stop = state.watcher_stop.subscribe();
     let consumer = tokio::spawn(async move {
-        while let Some(mut text) = rx.recv().await {
-            while let Ok(newer) = rx.try_recv() {
-                text = newer;
+        loop {
+            tokio::select! {
+                changed = stop.changed() => {
+                    let ended = changed.is_err() || *stop.borrow();
+                    if ended { break; }
+                }
+                maybe = rx.recv() => {
+                    let Some(mut text) = maybe else { break };
+                    while let Ok(newer) = rx.try_recv() {
+                        text = newer;
+                    }
+                    let _ = handle_text(&state, &text, Origin::Auto).await;
+                }
             }
-            let _ = handle_text(&state, &text, Origin::Auto).await;
         }
     });
     Ok(consumer)
@@ -89,7 +101,7 @@ mod tests {
             guard: tokio::sync::Mutex::new(pardon_core::loopguard::LoopGuard::new(
                 Duration::from_millis(cfg.daemon.dedup_window_ms),
             )),
-            cfg,
+            cfg: std::sync::RwLock::new(cfg),
             started: std::time::Instant::now(),
             translator,
             notifier,
@@ -97,6 +109,9 @@ mod tests {
             counters: Default::default(),
             clipboard_watching: std::sync::atomic::AtomicBool::new(false),
             shutdown: Arc::new(tokio::sync::Notify::new()),
+            watcher_stop: tokio::sync::watch::channel(false).0,
+            history: None,
+            events: tokio::sync::broadcast::channel(64).0,
         })
     }
 

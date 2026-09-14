@@ -89,6 +89,9 @@ pub struct DaemonConfig {
     /// 词卡通知显示学习徽章行（柯林斯星级 · 牛津核心 · 考试标签）。
     #[serde(default)]
     pub show_word_badge: bool,
+    /// 翻译结果优先用 GUI 弹窗展示（无 GUI 订阅者时回退桌面通知）。
+    #[serde(default)]
+    pub popup: bool,
 }
 
 fn default_http_bind() -> String {
@@ -117,6 +120,7 @@ impl Default for DaemonConfig {
             copy_translation: false,
             notify_timeout_ms: default_notify_timeout_ms(),
             show_word_badge: false,
+            popup: false,
         }
     }
 }
@@ -612,6 +616,7 @@ model = "qwen2.5:7b"
         assert!(!cfg.daemon.copy_translation);
         assert_eq!(cfg.daemon.notify_timeout_ms, 5000);
         assert!(!cfg.daemon.show_word_badge);
+        assert!(!cfg.daemon.popup);
     }
 
     #[test]
@@ -626,6 +631,7 @@ dedup_window_ms = 2000
 copy_translation = true
 notify_timeout_ms = 3000
 show_word_badge = true
+popup = true
 "#,
         )
         .unwrap();
@@ -637,6 +643,7 @@ show_word_badge = true
         assert!(d.copy_translation);
         assert_eq!(d.notify_timeout_ms, 3000);
         assert!(d.show_word_badge);
+        assert!(d.popup);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! 文本处理核心：自动剪贴板事件与显式触发共用
 //! （防回环/长度上限 → 分流翻译 → 通知 → 可选译文写回）。
 
+use crate::events;
 use crate::state::DaemonState;
 use pardon_core::pipeline::Translation;
 use std::sync::atomic::Ordering;
@@ -33,12 +34,13 @@ const MAX_SUGGESTIONS: usize = 3;
 /// 核心处理链：trim → （Auto）长度上限 + 防回环 → 翻译 → 通知 →
 /// （可选）译文写回剪贴板（写回前登记防回环哈希）。
 pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> HandleResult {
+    let cfg = state.cfg_snapshot();
     let text = raw.trim();
     if text.is_empty() {
         return HandleResult::Skipped("empty");
     }
     if origin == Origin::Auto {
-        if text.len() > state.cfg.daemon.max_text_bytes {
+        if text.len() > cfg.daemon.max_text_bytes {
             log::debug!("skip oversize text ({} bytes)", text.len());
             return HandleResult::Skipped("oversize");
         }
@@ -57,38 +59,87 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
     let translation = state.translator.translate(text).await;
     state.counters.translations.fetch_add(1, Ordering::Relaxed);
 
+    // 成功翻译落历史（空译文不落；库不可用时 state.history 为 None）
+    if !translation.translation.is_empty() {
+        if let Some(h) = &state.history {
+            let origin_str = match origin {
+                Origin::Auto => "auto",
+                Origin::Trigger => "trigger",
+            };
+            let ts_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
+            let e = pardon_core::history::HistoryEntry {
+                ts_ms,
+                text: translation.text.clone(),
+                translation: translation.translation.clone(),
+                engine: translation.engine.clone(),
+                origin: origin_str.into(),
+            };
+            if let Err(err) = h.lock().await.record(&e) {
+                log::warn!("history record failed: {err:#}");
+            }
+        }
+    }
+
     // 词典命中（Word 路由）→ 完整词卡通知（音标+词形+可选徽章）；
     // 非词典结果 → 通用通知；文本为英文词形（≤2 词）且词典建议非空时，
     // 把「未收录；试试：…」追加为译文后的尾行（LLM 纠错译文与建议共存）。
     let dict_sourced = translation.engine == "ecdict" || translation.engine == "cedict";
+    let mut card_for_popup: Option<pardon_core::dict::WordCard> = None;
     let (summary, body) = if dict_sourced && !translation.translation.is_empty() {
         let card = state.translator.lookup(&translation.text).await;
-        format_word_notification(&card, state.cfg.daemon.show_word_badge)
+        card_for_popup = Some(card.clone());
+        format_word_notification(&card, cfg.daemon.show_word_badge)
     } else {
         let miss_hint = if is_word_shaped_en(&translation.text) {
             let card = state.translator.lookup(&translation.text).await;
-            suggestion_hint(&card)
+            let hint = suggestion_hint(&card);
+            if hint.is_some() {
+                card_for_popup = Some(card.clone());
+            }
+            hint
         } else {
             None
         };
         format_notification(&translation, miss_hint.as_deref())
     };
+
+    // popup 输出：有订阅者 → 广播事件并跳过桌面通知；否则回退通知
+    let popup_sent = if cfg.daemon.popup {
+        match (events::Event::Popup {
+            translation: translation.clone(),
+            card: card_for_popup,
+        })
+        .to_line()
+        {
+            Ok(line) => state.events.send(line).is_ok(),
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
     // notify 是同步 D-Bus 往返（notify-rust 超时可至 ~25s）→ 挪到 blocking
     // 线程，避免卡住 runtime worker 与串行剪贴板消费循环（join 失败视同
-    // notify 失败，语义同 http.rs 触发口读剪贴板）。
-    let notifier = Arc::clone(&state.notifier);
-    let notified = tokio::task::spawn_blocking(move || notifier.notify(&summary, &body))
-        .await
-        .unwrap_or_else(|e| Err(anyhow::anyhow!("notify task failed: {e}")))
-        .inspect_err(|e| log::warn!("notify failed: {e:#}"))
-        .is_ok();
-    if notified {
+    // notify 失败，语义同 http.rs 触发口读剪贴板）。popup 已送达时跳过。
+    let notified = if popup_sent {
+        true
+    } else {
+        let notifier = Arc::clone(&state.notifier);
+        tokio::task::spawn_blocking(move || notifier.notify(&summary, &body))
+            .await
+            .unwrap_or_else(|e| Err(anyhow::anyhow!("notify task failed: {e}")))
+            .inspect_err(|e| log::warn!("notify failed: {e:#}"))
+            .is_ok()
+    };
+    if notified && !popup_sent {
         state.counters.notifications.fetch_add(1, Ordering::Relaxed);
     }
 
     // 译文写回剪贴板：先登记（防回环），再写入（write_clipboard 会 spawn
     // 子进程并等待，同样走 blocking 线程）
-    if state.cfg.daemon.copy_translation && !translation.translation.is_empty() {
+    if cfg.daemon.copy_translation && !translation.translation.is_empty() {
         let now = std::time::Instant::now();
         state
             .guard
@@ -286,7 +337,8 @@ mod tests {
         }
     }
 
-    /// 组装测试 state：默认 AppConfig + 注入的假实现。
+    /// 组装测试 state：注入的假实现 + 热配置/事件广播新字段
+    /// （history=None；popup 测试经 cfg.daemon.popup 控制）。
     fn test_state(
         tr: Arc<FakeTranslator>,
         no: Arc<FakeNotifier>,
@@ -298,7 +350,7 @@ mod tests {
             guard: tokio::sync::Mutex::new(pardon_core::loopguard::LoopGuard::new(
                 Duration::from_millis(cfg.daemon.dedup_window_ms),
             )),
-            cfg,
+            cfg: std::sync::RwLock::new(cfg),
             started: std::time::Instant::now(),
             translator: tr,
             notifier: no,
@@ -306,7 +358,23 @@ mod tests {
             counters: Default::default(),
             clipboard_watching: std::sync::atomic::AtomicBool::new(false),
             shutdown: Arc::new(tokio::sync::Notify::new()),
+            watcher_stop: tokio::sync::watch::channel(false).0,
+            history: None,
+            events: tokio::sync::broadcast::channel(64).0,
         }
+    }
+
+    /// test_state + history 注入（history 落库测试用）。
+    fn test_state_with_history(
+        tr: Arc<FakeTranslator>,
+        no: Arc<FakeNotifier>,
+        cb: Arc<FakeClipboard>,
+        cfg: AppConfig,
+        history: Option<Arc<tokio::sync::Mutex<pardon_core::history::History>>>,
+    ) -> DaemonState {
+        let mut s = test_state(tr, no, cb, cfg);
+        s.history = history;
+        s
     }
 
     fn base_cfg() -> AppConfig {
@@ -656,5 +724,73 @@ mod tests {
         assert!(sent[0].1.contains("v. 跑"), "body: {}", sent[0].1);
         // 默认配置 show_word_badge=false → 徽章不出现（词卡数据有 3★/牛津/四级）
         assert!(!sent[0].1.contains("柯林斯"), "body: {}", sent[0].1);
+    }
+
+    /// 14. popup=true 且有订阅者 → 不走桌面通知，事件行进广播。
+    #[tokio::test]
+    async fn popup_mode_sends_event_instead_of_notification() {
+        let mut cfg = base_cfg();
+        cfg.daemon.popup = true;
+        let no = Arc::new(FakeNotifier::default());
+        let s = test_state(
+            Arc::new(FakeTranslator::new()),
+            no.clone(),
+            Arc::new(FakeClipboard::default()),
+            cfg,
+        );
+        let mut rx = s.events.subscribe();
+        let r = handle_text(&s, "hello world", Origin::Trigger).await;
+        assert!(
+            matches!(r, HandleResult::Handled { notified: true, .. }),
+            "popup 视作已送达"
+        );
+        let line = rx.try_recv().unwrap();
+        assert!(line.contains(r#""event":"popup""#), "{line}");
+        assert!(line.contains("hello world"), "{line}");
+        assert_eq!(no.sent.lock().unwrap().len(), 0, "popup 命中不发桌面通知");
+    }
+
+    /// 15. popup=true 但无订阅者 → 回退通知。
+    #[tokio::test]
+    async fn popup_mode_without_subscribers_falls_back_to_notify() {
+        let mut cfg = base_cfg();
+        cfg.daemon.popup = true;
+        let no = Arc::new(FakeNotifier::default());
+        let s = test_state(
+            Arc::new(FakeTranslator::new()),
+            no.clone(),
+            Arc::new(FakeClipboard::default()),
+            cfg,
+        );
+        let r = handle_text(&s, "hello world", Origin::Trigger).await;
+        assert!(matches!(r, HandleResult::Handled { notified: true, .. }));
+        assert_eq!(no.sent.lock().unwrap().len(), 1, "无订阅者回退通知");
+    }
+
+    /// 16. 成功翻译落历史（origin=trigger/auto；空译文不落）。
+    #[tokio::test]
+    async fn successful_translation_recorded_to_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let hist = Arc::new(tokio::sync::Mutex::new(
+            pardon_core::history::History::open(&dir.path().join("h.sqlite")).unwrap(),
+        ));
+        let ft = FakeTranslator::new();
+        ft.results.lock().unwrap().push((
+            "hello".into(),
+            FakeTranslator::sentence("hello", "你好", "glm"),
+        ));
+        let s = test_state_with_history(
+            Arc::new(ft),
+            Arc::new(FakeNotifier::default()),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+            Some(hist.clone()),
+        );
+        handle_text(&s, "hello", Origin::Trigger).await;
+        handle_text(&s, "你好重复", Origin::Auto).await; // FakeTranslator 默认译文非空 → 也记录
+        let entries = hist.lock().await.list(10).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].origin, "auto");
+        assert_eq!(entries[1].origin, "trigger");
     }
 }

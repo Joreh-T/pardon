@@ -134,12 +134,13 @@ struct StatusCounters {
 }
 
 async fn get_status(State(state): State<Arc<DaemonState>>) -> Response {
+    let cfg = state.cfg_snapshot();
     Json(StatusResponse {
         version: pardon_core::VERSION,
         uptime_s: state.started.elapsed().as_secs(),
         clipboard_watching: state.clipboard_watching.load(Ordering::Relaxed),
-        auto_translate: state.cfg.daemon.auto_translate,
-        default_engine: state.cfg.default_engine.clone(),
+        auto_translate: cfg.daemon.auto_translate,
+        default_engine: cfg.default_engine.clone(),
         counters: StatusCounters {
             clipboard_events: state.counters.clipboard_events.load(Ordering::Relaxed),
             translations: state.counters.translations.load(Ordering::Relaxed),

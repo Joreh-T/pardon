@@ -59,7 +59,8 @@ pub struct Counters {
 }
 
 pub struct DaemonState {
-    pub cfg: AppConfig,
+    /// 配置：读多写少（每事件读快照）；reload 只写 daemon 字段。
+    pub cfg: std::sync::RwLock<AppConfig>,
     pub started: Instant,
     pub translator: Arc<dyn Translator>,
     pub notifier: Arc<dyn Notifier>,
@@ -71,4 +72,73 @@ pub struct DaemonState {
     pub clipboard_watching: AtomicBool,
     /// `/shutdown` 与 SIGTERM/SIGINT 共用的关停信号。
     pub shutdown: Arc<tokio::sync::Notify>,
+    /// 剪贴板监听停止信号（watch：true=请求停止；托盘/reload 实时开关用）。
+    pub watcher_stop: tokio::sync::watch::Sender<bool>,
+    /// 翻译历史（打开失败 → None 降级，不影响翻译）。
+    pub history: Option<Arc<tokio::sync::Mutex<pardon_core::history::History>>>,
+    /// 事件广播（events.rs 的 JSON 行）→ UDS 订阅者（GUI）。
+    pub events: tokio::sync::broadcast::Sender<String>,
+}
+
+impl DaemonState {
+    /// 配置快照：读锁 + clone，调用点一行拿到一致视图。
+    pub fn cfg_snapshot(&self) -> AppConfig {
+        self.cfg.read().expect("cfg lock poisoned").clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::*;
+
+    /// PARDON_CONFIG 是进程级全局 → 篡改它的测试串行化（tokio Mutex：
+    /// 守卫需跨 await 持有，std 锁会触发 clippy::await_holding_lock）。
+    static CFG_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// daemon 字段热生效 + 引擎字段 → restart_required。
+    #[tokio::test]
+    async fn apply_config_live_fields_and_restart_flag() {
+        let _lock = CFG_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        std::fs::write(&cfg_path, "[daemon]\nauto_translate = false\n").unwrap();
+        std::env::set_var("PARDON_CONFIG", &cfg_path);
+        // 初始：auto_translate=true / show_word_badge=true / default_engine=youdao，
+        // watching 未启动（false）→ reload 翻转只改 cfg，无需启动监听
+        let mut cfg = AppConfig::default();
+        cfg.daemon.show_word_badge = true;
+        let state = Arc::new(DaemonState {
+            guard: tokio::sync::Mutex::new(LoopGuard::new(std::time::Duration::from_millis(
+                cfg.daemon.dedup_window_ms,
+            ))),
+            cfg: std::sync::RwLock::new(cfg),
+            started: Instant::now(),
+            translator: Arc::new(FakeTranslator::new()),
+            notifier: Arc::new(FakeNotifier::default()),
+            clipboard: Arc::new(FakeClipboard::default()),
+            counters: Default::default(),
+            clipboard_watching: AtomicBool::new(false),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+            watcher_stop: tokio::sync::watch::channel(false).0,
+            history: None,
+            events: tokio::sync::broadcast::channel(64).0,
+        });
+        let restart = crate::apply_config(&state).await.unwrap();
+        assert!(!restart, "daemon 字段变更不需要重启");
+        assert!(!state.cfg_snapshot().daemon.auto_translate);
+        assert!(
+            !state.cfg_snapshot().daemon.show_word_badge,
+            "daemon 段整体替换"
+        );
+        // 引擎字段变更 → restart_required
+        std::fs::write(
+            &cfg_path,
+            "default_engine = \"llm\"\n[llm]\ndefault_provider=\"x\"\n[[llm.providers]]\nid=\"x\"\ntype=\"openai\"\nbase_url=\"http://x\"\nmodel=\"m\"\n[daemon]\nauto_translate = false\n",
+        )
+        .unwrap();
+        let restart = crate::apply_config(&state).await.unwrap();
+        assert!(restart);
+        std::env::remove_var("PARDON_CONFIG");
+    }
 }

@@ -30,7 +30,7 @@ async fn spawn_router(
         guard: tokio::sync::Mutex::new(pardon_core::loopguard::LoopGuard::new(
             Duration::from_millis(cfg.daemon.dedup_window_ms),
         )),
-        cfg,
+        cfg: std::sync::RwLock::new(cfg),
         started: std::time::Instant::now(),
         translator,
         notifier,
@@ -38,6 +38,9 @@ async fn spawn_router(
         counters: Default::default(),
         clipboard_watching: std::sync::atomic::AtomicBool::new(true),
         shutdown: Arc::new(tokio::sync::Notify::new()),
+        watcher_stop: tokio::sync::watch::channel(false).0,
+        history: None,
+        events: tokio::sync::broadcast::channel(64).0,
     });
     let app = router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
