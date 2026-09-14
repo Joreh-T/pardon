@@ -57,12 +57,16 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
     let translation = state.translator.translate(text).await;
     state.counters.translations.fetch_add(1, Ordering::Relaxed);
 
-    // 词典未收录：取 suggestions 丰富通知（"runnign → 试试 running"）
-    let miss_hint = if translation.translation.is_empty()
-        && (translation.engine == "ecdict" || translation.engine == "cedict")
-    {
+    // 分三种通知形态：词典命中（词路由）→ 完整词卡（音标+词形）；
+    // 词典未收录 → suggestions 提示（"runnign → 试试 running"）；
+    // 句子/LLM → 译文本身（无音标信息）。
+    let dict_sourced = translation.engine == "ecdict" || translation.engine == "cedict";
+    let (summary, body) = if !translation.translation.is_empty() && dict_sourced {
         let card = state.translator.lookup(&translation.text).await;
-        if card.suggestions.is_empty() {
+        format_word_notification(&card)
+    } else if translation.translation.is_empty() && dict_sourced {
+        let card = state.translator.lookup(&translation.text).await;
+        let miss_hint = if card.suggestions.is_empty() {
             None
         } else {
             let shown: Vec<String> = card
@@ -72,12 +76,11 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
                 .cloned()
                 .collect();
             Some(format!("未收录；试试：{}", shown.join("、")))
-        }
+        };
+        format_notification(&translation, miss_hint.as_deref())
     } else {
-        None
+        format_notification(&translation, None)
     };
-
-    let (summary, body) = format_notification(&translation, miss_hint.as_deref());
     // notify 是同步 D-Bus 往返（notify-rust 超时可至 ~25s）→ 挪到 blocking
     // 线程，避免卡住 runtime worker 与串行剪贴板消费循环（join 失败视同
     // notify 失败，语义同 http.rs 触发口读剪贴板）。
@@ -116,7 +119,8 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
     }
 }
 
-/// 通知文案：摘要 = `pardon · 原文截断`；正文 = 译文（或失败/未收录提示）。
+/// 通知文案（句子/通用）：摘要 = `pardon · 原文截断`；正文 = 译文
+/// （或失败/未收录提示）。
 pub fn format_notification(tr: &Translation, miss_hint: Option<&str>) -> (String, String) {
     let summary = format!("pardon · {}", truncate_chars(&tr.text, SUMMARY_MAX_CHARS));
     let body = if !tr.translation.is_empty() {
@@ -127,6 +131,58 @@ pub fn format_notification(tr: &Translation, miss_hint: Option<&str>) -> (String
         miss_hint.unwrap_or("未收录").to_string()
     };
     (summary, body)
+}
+
+/// 词卡命中通知：摘要 = `pardon · 词 /音标/`（CEDICT 侧为拼音，无音标则
+/// 只有词）；正文 = 词性释义行 + 词形变化行。
+pub fn format_word_notification(card: &pardon_core::dict::WordCard) -> (String, String) {
+    // 音标优先英式、缺省美式（CEDICT 侧 uk 字段存的是拼音）
+    let phonetic = card
+        .phonetic
+        .as_ref()
+        .and_then(|p| p.uk.as_deref().or(p.us.as_deref()))
+        .filter(|p| !p.is_empty());
+    let summary = match phonetic {
+        Some(p) => format!("pardon · {} /{}/", card.word, p),
+        None => format!("pardon · {}", card.word),
+    };
+    let mut body = pardon_core::pipeline::card_text(card);
+    if let Some(forms) = exchange_line(&card.exchange) {
+        if body.is_empty() {
+            body = forms;
+        } else {
+            body.push('\n');
+            body.push_str(&forms);
+        }
+    }
+    (summary, truncate_chars(&body, BODY_MAX_CHARS))
+}
+
+/// 词形变化一行（去重保序、封顶 4 个）：`词形：ran · running · runs`。
+fn exchange_line(ex: &Option<pardon_core::dict::Exchange>) -> Option<String> {
+    let ex = ex.as_ref()?;
+    let mut seen: Vec<&str> = Vec::new();
+    for form in [
+        &ex.past,
+        &ex.pp,
+        &ex.ing,
+        &ex.third,
+        &ex.comparative,
+        &ex.superlative,
+        &ex.plural,
+    ] {
+        if let Some(form) = form.as_deref() {
+            if !form.is_empty() && !seen.contains(&form) {
+                seen.push(form);
+            }
+        }
+    }
+    if seen.is_empty() {
+        None
+    } else {
+        let shown: Vec<&str> = seen.iter().take(4).copied().collect();
+        Some(format!("词形：{}", shown.join(" · ")))
+    }
 }
 
 /// 按字符截断（CJK 安全），超长追加省略号。
@@ -371,12 +427,116 @@ mod tests {
         assert_eq!(truncate_chars("", 3), "");
     }
 
-    /// 10. 词卡结果：summary = `pardon · 原文`，body = 词卡文本。
+    /// 10. 句子/LLM 结果：summary = `pardon · 原文`，body = 译文（无音标）。
     #[tokio::test]
-    async fn format_notification_word_uses_word_summary() {
+    async fn format_notification_sentence_has_no_phonetic() {
         let tr = FakeTranslator::sentence("run", "v. 跑；奔跑", "ecdict");
         let (summary, body) = format_notification(&tr, None);
         assert_eq!(summary, "pardon · run");
         assert_eq!(body, "v. 跑；奔跑");
+        let tr = FakeTranslator::sentence("hello world", "你好世界", "glm");
+        let (summary, body) = format_notification(&tr, None);
+        assert_eq!(summary, "pardon · hello world");
+        assert!(!summary.contains('/'), "LLM 摘要不应有音标: {summary}");
+        assert_eq!(body, "你好世界");
+    }
+
+    /// 11. 词卡命中通知：音标进摘要、词形变化进正文（去重封顶）。
+    #[tokio::test]
+    async fn word_hit_notification_has_phonetic_and_exchange() {
+        let card = WordCard {
+            found: true,
+            word: "run".into(),
+            phonetic: Some(pardon_core::dict::Phonetic {
+                uk: Some("rʌn".into()),
+                us: None,
+            }),
+            pos: vec![pardon_core::dict::PosGloss {
+                pos: "v.".into(),
+                gloss: vec!["跑".into(), "运转".into()],
+            }],
+            definition: vec![],
+            exchange: Some(pardon_core::dict::Exchange {
+                past: Some("ran".into()),
+                pp: Some("ran".into()), // 与 past 相同 → 去重
+                ing: Some("running".into()),
+                third: Some("runs".into()),
+                comparative: None,
+                superlative: None,
+                plural: None,
+                lemma: None,
+            }),
+            collins: None,
+            oxford: false,
+            tags: vec![],
+            source: "ecdict".into(),
+            suggestions: vec![],
+        };
+        let (summary, body) = format_word_notification(&card);
+        assert_eq!(summary, "pardon · run /rʌn/");
+        assert!(body.contains("v. 跑；运转"), "body: {body}");
+        assert!(body.contains("词形：ran · running · runs"), "body: {body}");
+    }
+
+    /// 12. 词卡无音标：摘要只有词；无词形：正文只有释义行。
+    #[tokio::test]
+    async fn word_notification_without_phonetic_or_exchange() {
+        let card = WordCard {
+            found: true,
+            word: "gave".into(),
+            phonetic: None,
+            pos: vec![],
+            definition: vec![],
+            exchange: None,
+            collins: None,
+            oxford: false,
+            tags: vec![],
+            source: "ecdict".into(),
+            suggestions: vec![],
+        };
+        let (summary, body) = format_word_notification(&card);
+        assert_eq!(summary, "pardon · gave");
+        assert_eq!(body, "");
+    }
+
+    /// 13. handle_text 走词典命中路径：通知来自词卡（音标可见）。
+    #[tokio::test]
+    async fn handle_text_word_hit_uses_rich_card_notification() {
+        let ft = FakeTranslator::new();
+        ft.results.lock().unwrap().push((
+            "run".into(),
+            FakeTranslator::sentence("run", "v. 跑", "ecdict"),
+        ));
+        *ft.lookup_card.lock().unwrap() = WordCard {
+            found: true,
+            word: "run".into(),
+            phonetic: Some(pardon_core::dict::Phonetic {
+                uk: Some("rʌn".into()),
+                us: None,
+            }),
+            pos: vec![pardon_core::dict::PosGloss {
+                pos: "v.".into(),
+                gloss: vec!["跑".into()],
+            }],
+            definition: vec![],
+            exchange: None,
+            collins: None,
+            oxford: false,
+            tags: vec![],
+            source: "ecdict".into(),
+            suggestions: vec![],
+        };
+        let no = Arc::new(FakeNotifier::default());
+        let s = test_state(
+            Arc::new(ft),
+            no.clone(),
+            Arc::new(FakeClipboard::default()),
+            base_cfg(),
+        );
+        let r = handle_text(&s, "run", Origin::Trigger).await;
+        assert!(matches!(r, HandleResult::Handled { .. }));
+        let sent = no.sent.lock().unwrap();
+        assert_eq!(sent[0].0, "pardon · run /rʌn/");
+        assert!(sent[0].1.contains("v. 跑"), "body: {}", sent[0].1);
     }
 }
