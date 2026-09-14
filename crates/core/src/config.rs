@@ -1,6 +1,7 @@
 //! TOML 配置：加载、校验与默认配置写入。
 
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -11,6 +12,8 @@ pub struct AppConfig {
     pub default_engine: String,
     #[serde(default)]
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub daemon: DaemonConfig,
 }
 
 fn default_engine_youdao() -> String {
@@ -22,6 +25,7 @@ impl Default for AppConfig {
         Self {
             default_engine: "youdao".into(),
             llm: LlmConfig::default(),
+            daemon: DaemonConfig::default(),
         }
     }
 }
@@ -62,6 +66,57 @@ pub enum ProviderType {
     Ollama,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    /// HTTP 触发口绑定地址；只允许回环地址（PARDON_HTTP_BIND 环境变量可覆盖）。
+    #[serde(default = "default_http_bind")]
+    pub http_bind: String,
+    /// 「复制即翻译」总开关（剪贴板自动监听）。
+    #[serde(default = "default_true")]
+    pub auto_translate: bool,
+    /// 自动翻译的文本字节上限，超过则忽略（spec §6 默认 5KB）。
+    #[serde(default = "default_max_text_bytes")]
+    pub max_text_bytes: usize,
+    /// 同内容去重时间窗毫秒（spec §5.5 防回环）。
+    #[serde(default = "default_dedup_window_ms")]
+    pub dedup_window_ms: u64,
+    /// 译文自动写回剪贴板（写入前登记防回环哈希）。
+    #[serde(default)]
+    pub copy_translation: bool,
+    /// 桌面通知显示时长毫秒。
+    #[serde(default = "default_notify_timeout_ms")]
+    pub notify_timeout_ms: u32,
+}
+
+fn default_http_bind() -> String {
+    "127.0.0.1:7377".into()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_max_text_bytes() -> usize {
+    5120
+}
+fn default_dedup_window_ms() -> u64 {
+    10_000
+}
+fn default_notify_timeout_ms() -> u32 {
+    5000
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            http_bind: default_http_bind(),
+            auto_translate: default_true(),
+            max_text_bytes: default_max_text_bytes(),
+            dedup_window_ms: default_dedup_window_ms(),
+            copy_translation: false,
+            notify_timeout_ms: default_notify_timeout_ms(),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("config invalid: {field}: {reason}")]
@@ -89,6 +144,28 @@ pub fn config_path() -> PathBuf {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(default_config_path)
+}
+
+/// 生效的 HTTP 绑定地址：`PARDON_HTTP_BIND`（非空）覆盖配置值；
+/// 两者都必须是合法 SocketAddr 且为回环地址（localhost-only 契约）。
+pub fn effective_http_bind(cfg: &AppConfig) -> Result<SocketAddr, ConfigError> {
+    let raw = std::env::var("PARDON_HTTP_BIND")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| cfg.daemon.http_bind.clone());
+    let invalid = |reason: String| ConfigError::Invalid {
+        field: "daemon.http_bind".into(),
+        reason,
+    };
+    let addr: SocketAddr = raw
+        .parse()
+        .map_err(|e| invalid(format!("not a valid socket address ({e})")))?;
+    if !addr.ip().is_loopback() {
+        return Err(invalid(
+            "must be a loopback address (127.x.x.x / ::1)".into(),
+        ));
+    }
+    Ok(addr)
 }
 
 /// 读取配置：路径见 [`config_path`]；文件不存在 → 内置默认。
@@ -215,6 +292,35 @@ impl AppConfig {
                 });
             }
         }
+
+        let d = &self.daemon;
+        match d.http_bind.parse::<SocketAddr>() {
+            Ok(addr) if addr.ip().is_loopback() => {}
+            Ok(_) => {
+                return Err(ConfigError::Invalid {
+                    field: "daemon.http_bind".into(),
+                    reason: "must be a loopback address (127.x.x.x / ::1)".into(),
+                })
+            }
+            Err(e) => {
+                return Err(ConfigError::Invalid {
+                    field: "daemon.http_bind".into(),
+                    reason: format!("not a valid socket address ({e})"),
+                })
+            }
+        }
+        if d.max_text_bytes == 0 {
+            return Err(ConfigError::Invalid {
+                field: "daemon.max_text_bytes".into(),
+                reason: "must be >= 1".into(),
+            });
+        }
+        if d.dedup_window_ms == 0 {
+            return Err(ConfigError::Invalid {
+                field: "daemon.dedup_window_ms".into(),
+                reason: "must be >= 1".into(),
+            });
+        }
         Ok(())
     }
 }
@@ -236,6 +342,9 @@ impl ProviderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 串行化会改动 PARDON_HTTP_BIND 的测试，避免并行互踩。
+    static HTTP_BIND_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     const OPENAI_TOML: &str = r#"
 default_engine = "llm"
@@ -487,5 +596,89 @@ model = "qwen2.5:7b"
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains('#'), "默认配置应带注释");
         assert_eq!(load_from_str(&text).unwrap(), AppConfig::default());
+    }
+
+    #[test]
+    fn daemon_section_defaults() {
+        let cfg = load_from_str("").unwrap();
+        assert_eq!(cfg.daemon.http_bind, "127.0.0.1:7377");
+        assert!(cfg.daemon.auto_translate);
+        assert_eq!(cfg.daemon.max_text_bytes, 5120);
+        assert_eq!(cfg.daemon.dedup_window_ms, 10_000);
+        assert!(!cfg.daemon.copy_translation);
+        assert_eq!(cfg.daemon.notify_timeout_ms, 5000);
+    }
+
+    #[test]
+    fn daemon_section_overrides() {
+        let cfg = load_from_str(
+            r#"
+[daemon]
+http_bind = "127.0.0.1:9999"
+auto_translate = false
+max_text_bytes = 100
+dedup_window_ms = 2000
+copy_translation = true
+notify_timeout_ms = 3000
+"#,
+        )
+        .unwrap();
+        let d = &cfg.daemon;
+        assert_eq!(d.http_bind, "127.0.0.1:9999");
+        assert!(!d.auto_translate);
+        assert_eq!(d.max_text_bytes, 100);
+        assert_eq!(d.dedup_window_ms, 2000);
+        assert!(d.copy_translation);
+        assert_eq!(d.notify_timeout_ms, 3000);
+    }
+
+    #[test]
+    fn non_loopback_http_bind_is_invalid() {
+        let err = load_from_str(
+            r#"[daemon]
+http_bind = "0.0.0.0:7377"
+"#,
+        )
+        .unwrap_err();
+        match &err {
+            ConfigError::Invalid { field, .. } => assert_eq!(field, "daemon.http_bind"),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+        let err = load_from_str(
+            r#"[daemon]
+http_bind = "not an addr"
+"#,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn zero_limits_are_invalid() {
+        for bad in ["max_text_bytes = 0", "dedup_window_ms = 0"] {
+            let toml = format!("[daemon]\n{bad}\n");
+            assert!(load_from_str(&toml).is_err(), "{bad} should be invalid");
+        }
+    }
+
+    #[test]
+    fn effective_http_bind_resolves_config_and_env() {
+        let _lock = HTTP_BIND_LOCK.lock().unwrap();
+        let cfg = load_from_str("").unwrap();
+        // 无环境变量 → 配置默认
+        std::env::remove_var("PARDON_HTTP_BIND");
+        let addr = effective_http_bind(&cfg).unwrap();
+        assert_eq!(addr.port(), 7377);
+        assert!(addr.ip().is_loopback());
+        // 环境变量覆盖（含 port 0，测试/调试用）
+        std::env::set_var("PARDON_HTTP_BIND", "127.0.0.1:0");
+        assert_eq!(effective_http_bind(&cfg).unwrap().port(), 0);
+        // 非回环拒绝
+        std::env::set_var("PARDON_HTTP_BIND", "192.168.1.5:7377");
+        assert!(matches!(
+            effective_http_bind(&cfg),
+            Err(ConfigError::Invalid { .. })
+        ));
+        std::env::remove_var("PARDON_HTTP_BIND");
     }
 }
