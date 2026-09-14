@@ -341,6 +341,7 @@ model/key 是否已配置）；**api_key / api_key_env 绝不经 GUI 显示或�
 6. `pardon history --limit 5` 与 `--json` 输出正确；`pardon translate hello`
    后条目出现。
 7. `~/.config/pardon/config.toml` 的注释在 GUI 改动后完好。
+8. GUI 在运行时，点托盘『打开主窗口』/『设置』应聚焦/打开对应窗口。
 
 ## License
 
