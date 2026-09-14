@@ -206,6 +206,7 @@ JSON 说明：响应中的可选项在缺省时直接省略键（如 trigger 响
 | dedup_window_ms | 10000 | 同内容去重时间窗（防回环） |
 | copy_translation | false | 译文自动写回剪贴板（写回前登记防回环，不会 ping-pong）；翻译进行期间的其他复制会被译文覆盖（防回环只防循环，不防丢失） |
 | notify_timeout_ms | 5000 | 通知显示时长 |
+| show_word_badge | false | 词卡通知显示学习徽章行（柯林斯星级 · 牛津核心 · 考试标签） |
 
 ### 手动测试矩阵（Niri + mako/dunst）
 

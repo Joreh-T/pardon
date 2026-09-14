@@ -63,7 +63,7 @@ pub async fn handle_text(state: &DaemonState, raw: &str, origin: Origin) -> Hand
     let dict_sourced = translation.engine == "ecdict" || translation.engine == "cedict";
     let (summary, body) = if !translation.translation.is_empty() && dict_sourced {
         let card = state.translator.lookup(&translation.text).await;
-        format_word_notification(&card)
+        format_word_notification(&card, state.cfg.daemon.show_word_badge)
     } else if translation.translation.is_empty() && dict_sourced {
         let card = state.translator.lookup(&translation.text).await;
         let miss_hint = if card.suggestions.is_empty() {
@@ -136,7 +136,10 @@ pub fn format_notification(tr: &Translation, miss_hint: Option<&str>) -> (String
 
 /// 词卡命中通知（词典风格分层）：标题 = 单词；正文 = 音标行（CEDICT 侧
 /// 为拼音）→ 词性释义行 → 词形变化行。
-pub fn format_word_notification(card: &pardon_core::dict::WordCard) -> (String, String) {
+pub fn format_word_notification(
+    card: &pardon_core::dict::WordCard,
+    show_badge: bool,
+) -> (String, String) {
     // 音标优先英式、缺省美式（CEDICT 侧 uk 字段存的是拼音）
     let phonetic = card
         .phonetic
@@ -154,8 +157,10 @@ pub fn format_word_notification(card: &pardon_core::dict::WordCard) -> (String, 
     if let Some(forms) = exchange_line(&card.exchange) {
         lines.push(forms);
     }
-    if let Some(badge) = badge_line(card) {
-        lines.push(badge);
+    if show_badge {
+        if let Some(badge) = badge_line(card) {
+            lines.push(badge);
+        }
     }
     (
         truncate_chars(&card.word, SUMMARY_MAX_CHARS),
@@ -508,7 +513,7 @@ mod tests {
             source: "ecdict".into(),
             suggestions: vec![],
         };
-        let (summary, body) = format_word_notification(&card);
+        let (summary, body) = format_word_notification(&card, true);
         assert_eq!(summary, "run");
         assert!(body.starts_with("/rʌn/\n"), "音标应为正文首行: {body}");
         assert!(body.contains("v. 跑；运转"), "body: {body}");
@@ -517,6 +522,9 @@ mod tests {
             body.ends_with("柯林斯 ★★★★ · 牛津核心 · 高考 · 雅思"),
             "badge line: {body}"
         );
+        // 开关关闭 → 徽章行不出现
+        let (_, body_off) = format_word_notification(&card, false);
+        assert!(!body_off.contains("柯林斯"), "body_off: {body_off}");
     }
 
     /// 12. 词卡无音标：摘要只有词；无词形：正文只有释义行。
@@ -535,7 +543,7 @@ mod tests {
             source: "ecdict".into(),
             suggestions: vec![],
         };
-        let (summary, body) = format_word_notification(&card);
+        let (summary, body) = format_word_notification(&card, true);
         assert_eq!(summary, "gave");
         assert_eq!(body, "");
     }
@@ -561,9 +569,9 @@ mod tests {
             }],
             definition: vec![],
             exchange: None,
-            collins: None,
-            oxford: false,
-            tags: vec![],
+            collins: Some(3),
+            oxford: true,
+            tags: vec!["cet4".into()],
             source: "ecdict".into(),
             suggestions: vec![],
         };
@@ -580,5 +588,7 @@ mod tests {
         assert_eq!(sent[0].0, "run");
         assert!(sent[0].1.starts_with("/rʌn/"), "body: {}", sent[0].1);
         assert!(sent[0].1.contains("v. 跑"), "body: {}", sent[0].1);
+        // 默认配置 show_word_badge=false → 徽章不出现（词卡数据有 3★/牛津/四级）
+        assert!(!sent[0].1.contains("柯林斯"), "body: {}", sent[0].1);
     }
 }
