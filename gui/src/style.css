@@ -310,6 +310,169 @@ button:hover {
   filter: brightness(1.1);
 }
 
+/* ── 设置页（settings.html）────────────────────────────── */
+.settings {
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.settings h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.settings h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.settings .dim {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+#form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.field input[type='checkbox'] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.field input[type='number'] {
+  flex: none;
+  width: 110px;
+  font-family: var(--mono);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.field select {
+  flex: none;
+  width: 110px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.field input:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field-label .restart {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--yellow);
+  border: 1px solid var(--yellow);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.field-label .dim {
+  margin-left: 6px;
+}
+
+.providers-wrap {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.provider {
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.provider:last-child {
+  border-bottom: none;
+}
+
+.provider-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.provider-line .key-ok {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--green);
+}
+
+.provider-line .key-miss {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.provider-url {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#btn-restart {
+  background: var(--yellow);
+  border-color: var(--yellow);
+  color: #1e1e2e;
+  font-weight: 600;
+}
+
+#btn-restart:hover {
+  background: var(--yellow);
+  filter: brightness(1.1);
+}
+
+#msg {
+  min-height: 18px;
+  font-size: 12px;
+  color: var(--green);
+}
+
+#msg.fail {
+  color: var(--red);
+}
+
 /* 滚动条与暗色协调（webkit webview） */
 ::-webkit-scrollbar {
   width: 8px;

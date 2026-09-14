@@ -7,8 +7,19 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <h1>pardon</h1>
-    <div id="app"></div>
+    <div class="app settings">
+      <h1>pardon 设置</h1>
+      <div id="form"></div>
+      <section class="providers-wrap">
+        <h2>LLM providers<span class="dim">（只读 · 改 config.toml）</span></h2>
+        <div id="providers"></div>
+      </section>
+      <div class="settings-actions">
+        <button id="btn-save">保存</button>
+        <button id="btn-restart" hidden>重启 pardond</button>
+      </div>
+      <div id="msg"></div>
+    </div>
     <script type="module" src="/src/settings.ts"></script>
   </body>
 </html>
