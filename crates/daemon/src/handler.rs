@@ -154,10 +154,48 @@ pub fn format_word_notification(card: &pardon_core::dict::WordCard) -> (String, 
     if let Some(forms) = exchange_line(&card.exchange) {
         lines.push(forms);
     }
+    if let Some(badge) = badge_line(card) {
+        lines.push(badge);
+    }
     (
         truncate_chars(&card.word, SUMMARY_MAX_CHARS),
         truncate_chars(&lines.join("\n"), BODY_MAX_CHARS),
     )
+}
+
+/// 学习优先级徽章行：`柯林斯 ★★★★ · 牛津核心 · 高考 · 雅思`。
+/// 星级/牛津/考试标签全部缺席时返回 None（不加空行）。
+fn badge_line(card: &pardon_core::dict::WordCard) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(c) = card.collins {
+        if c > 0 {
+            parts.push(format!("柯林斯 {}", "★".repeat((c.min(5)) as usize)));
+        }
+    }
+    if card.oxford {
+        parts.push("牛津核心".into());
+    }
+    parts.extend(card.tags.iter().map(|t| exam_tag_label(t)));
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
+}
+
+/// ECDICT 考试标签 → 中文；未识别的标签原样透出（新增词表不至于丢信息）。
+fn exam_tag_label(tag: &str) -> String {
+    match tag {
+        "zk" => "中考".into(),
+        "gk" => "高考".into(),
+        "cet4" => "四级".into(),
+        "cet6" => "六级".into(),
+        "ky" => "考研".into(),
+        "toefl" => "托福".into(),
+        "ielts" => "雅思".into(),
+        "gre" => "GRE".into(),
+        other => other.to_string(),
+    }
 }
 
 /// 词形变化一行（去重保序、封顶 4 个）：`词形：ran · running · runs`。
@@ -464,9 +502,9 @@ mod tests {
                 plural: None,
                 lemma: None,
             }),
-            collins: None,
-            oxford: false,
-            tags: vec![],
+            collins: Some(4),
+            oxford: true,
+            tags: vec!["gk".into(), "ielts".into()],
             source: "ecdict".into(),
             suggestions: vec![],
         };
@@ -475,6 +513,10 @@ mod tests {
         assert!(body.starts_with("/rʌn/\n"), "音标应为正文首行: {body}");
         assert!(body.contains("v. 跑；运转"), "body: {body}");
         assert!(body.contains("词形：ran · running · runs"), "body: {body}");
+        assert!(
+            body.ends_with("柯林斯 ★★★★ · 牛津核心 · 高考 · 雅思"),
+            "badge line: {body}"
+        );
     }
 
     /// 12. 词卡无音标：摘要只有词；无词形：正文只有释义行。
