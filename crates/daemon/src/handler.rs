@@ -132,112 +132,12 @@ pub fn truncate_chars(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{DaemonState, Translator};
+    use crate::state::DaemonState;
+    use crate::testing::*;
     use pardon_core::config::AppConfig;
     use pardon_core::dict::WordCard;
-    use pardon_core::pipeline::Translation;
-    use pardon_platform::{ClipboardAccess, Notifier};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Mutex};
-
-    /// 记录调用的假翻译器：translate 返回预设表（文本→结果），未命中返回
-    /// 标准成功句；lookup 返回预设词卡。
-    struct FakeTranslator {
-        results: Mutex<Vec<(String, Translation)>>,
-        lookup_card: Mutex<WordCard>,
-        delay_ms: u64,
-        calls: Mutex<Vec<String>>,
-    }
-
-    impl FakeTranslator {
-        fn new() -> Self {
-            Self {
-                results: Mutex::new(vec![]),
-                lookup_card: Mutex::new(WordCard {
-                    found: false,
-                    word: String::new(),
-                    phonetic: None,
-                    pos: vec![],
-                    definition: vec![],
-                    exchange: None,
-                    collins: None,
-                    oxford: false,
-                    tags: vec![],
-                    source: "ecdict".into(),
-                    suggestions: vec![],
-                }),
-                delay_ms: 0,
-                calls: Mutex::new(vec![]),
-            }
-        }
-        fn sentence_result(text: &str, translation: &str, engine: &str) -> Translation {
-            Translation {
-                source_lang: pardon_core::lang::Lang::En,
-                target_lang: pardon_core::lang::Lang::Zh,
-                text: text.into(),
-                translation: translation.into(),
-                engine: engine.into(),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl Translator for FakeTranslator {
-        async fn translate(&self, text: &str) -> Translation {
-            if self.delay_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
-            }
-            self.calls.lock().unwrap().push(text.to_string());
-            let r = self
-                .results
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|(t, _)| t == text)
-                .map(|(_, tr)| tr.clone());
-            r.unwrap_or_else(|| Self::sentence_result(text, "（译文）", "glm"))
-        }
-        async fn lookup(&self, word: &str) -> WordCard {
-            let mut c = self.lookup_card.lock().unwrap().clone();
-            c.word = word.to_string();
-            c
-        }
-    }
-
-    #[derive(Default)]
-    struct FakeNotifier {
-        sent: Mutex<Vec<(String, String)>>,
-        fail: bool,
-    }
-    impl Notifier for FakeNotifier {
-        fn notify(&self, summary: &str, body: &str) -> anyhow::Result<()> {
-            if self.fail {
-                anyhow::bail!("no notification daemon");
-            }
-            self.sent
-                .lock()
-                .unwrap()
-                .push((summary.into(), body.into()));
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct FakeClipboard {
-        written: Mutex<Vec<String>>,
-    }
-    impl ClipboardAccess for FakeClipboard {
-        fn read_clipboard(&self) -> anyhow::Result<String> {
-            Ok(String::new())
-        }
-        fn read_primary(&self) -> anyhow::Result<String> {
-            Ok(String::new())
-        }
-        fn write_clipboard(&self, text: &str) -> anyhow::Result<()> {
-            self.written.lock().unwrap().push(text.to_string());
-            Ok(())
-        }
-    }
 
     fn word_card_suggestions(v: &[&str]) -> WordCard {
         WordCard {
@@ -338,7 +238,7 @@ mod tests {
         let ft = FakeTranslator::new();
         ft.results.lock().unwrap().push((
             "runnign".into(),
-            FakeTranslator::sentence_result("runnign", "", "ecdict"),
+            FakeTranslator::sentence("runnign", "", "ecdict"),
         ));
         *ft.lookup_card.lock().unwrap() = word_card_suggestions(&["running", "run"]);
         let no = Arc::new(FakeNotifier::default());
@@ -366,7 +266,7 @@ mod tests {
         let ft = FakeTranslator::new();
         ft.results.lock().unwrap().push((
             "hello world".into(),
-            FakeTranslator::sentence_result("hello world", "", ""),
+            FakeTranslator::sentence("hello world", "", ""),
         ));
         let no = Arc::new(FakeNotifier::default());
         let s = test_state(
@@ -426,7 +326,7 @@ mod tests {
         let ft = FakeTranslator::new();
         ft.results.lock().unwrap().push((
             "hello".into(),
-            FakeTranslator::sentence_result("hello", "你好", "glm"),
+            FakeTranslator::sentence("hello", "你好", "glm"),
         ));
         let cb = Arc::new(FakeClipboard::default());
         let s = test_state(
@@ -463,7 +363,7 @@ mod tests {
     /// 10. 词卡结果：summary = `pardon · 原文`，body = 词卡文本。
     #[tokio::test]
     async fn format_notification_word_uses_word_summary() {
-        let tr = FakeTranslator::sentence_result("run", "v. 跑；奔跑", "ecdict");
+        let tr = FakeTranslator::sentence("run", "v. 跑；奔跑", "ecdict");
         let (summary, body) = format_notification(&tr, None);
         assert_eq!(summary, "pardon · run");
         assert_eq!(body, "v. 跑；奔跑");
