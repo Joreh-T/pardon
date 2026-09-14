@@ -6,6 +6,7 @@
 //! timeout/engine，exit 124/2）。
 
 mod cmd_daemon;
+mod cmd_history;
 mod cmd_lookup;
 mod cmd_speak;
 mod cmd_status;
@@ -61,6 +62,8 @@ enum Cmd {
     },
     /// Translate text (word or sentence)
     Translate(TranslateArgs),
+    /// Show translation history
+    History(cmd_history::HistoryArgs),
     /// Speak text aloud (TTS; no stdout output on success)
     Speak {
         /// Text to speak
@@ -96,6 +99,7 @@ async fn main() {
     let code = match cli.cmd {
         Cmd::Lookup { word, json } => cmd_lookup::run(&word, json),
         Cmd::Translate(args) => cmd_translate::run(&args).await,
+        Cmd::History(args) => cmd_history::run(&args).await,
         Cmd::Speak { text, lang } => cmd_speak::run(&text, &lang).await,
         Cmd::Config { init } => run_config(init),
         Cmd::Trigger { source } => run_trigger(&source).await,

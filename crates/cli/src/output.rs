@@ -70,3 +70,7 @@ pub fn lang_str(lang: Lang) -> &'static str {
         Lang::Zh => "zh",
     }
 }
+
+/// PARDON_HOME 环境变量测试串行锁（cmd_history / cmd_translate 共用）。
+#[cfg(test)]
+pub static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

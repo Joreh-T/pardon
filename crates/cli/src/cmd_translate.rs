@@ -81,6 +81,7 @@ async fn run_stream(
     // 终局裁决先行：全链失败时不发 Result 事件（stdout 保持 meta/delta 序列，
     // 错误只走 stderr）
     finish(&t)?;
+    record_history(&t, "cli");
     if single.is_some() {
         emit(&StreamEvent::Delta {
             text: t.translation.clone(),
@@ -114,6 +115,7 @@ async fn run_plain(
     let t = exit_on_outcome(outcome, args.timeout);
     // 同 stream：先裁决再输出，全链失败时 stdout 不留空 Result
     finish(&t)?;
+    record_history(&t, "cli");
     let ev = result_event(&t);
     let out = if args.json {
         serde_json::to_string(&ev)?
@@ -250,6 +252,30 @@ fn validate_engine(engine: &str) -> anyhow::Result<()> {
     }
 }
 
+/// 成功译文落历史（best-effort：库不可用不报错、不影响翻译输出与退出码）。
+pub(crate) fn record_history(t: &Translation, origin: &str) {
+    if t.translation.is_empty() {
+        return;
+    }
+    let Ok(path) = pardon_core::history::history_path() else {
+        return;
+    };
+    let Ok(mut h) = pardon_core::history::History::open(&path) else {
+        return;
+    };
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let _ = h.record(&pardon_core::history::HistoryEntry {
+        ts_ms,
+        text: t.text.clone(),
+        translation: t.translation.clone(),
+        engine: t.engine.clone(),
+        origin: origin.into(),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +341,45 @@ mod tests {
     fn lang_str_is_lowercase_code() {
         assert_eq!(output::lang_str(Lang::En), "en");
         assert_eq!(output::lang_str(Lang::Zh), "zh");
+    }
+
+    #[test]
+    fn record_history_skips_empty_translation() {
+        let _lock = crate::output::HOME_LOCK.lock().unwrap();
+        // 空译文：不建库文件
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("PARDON_HOME", dir.path());
+        let t = Translation {
+            source_lang: Lang::En,
+            target_lang: Lang::Zh,
+            text: "hi".into(),
+            translation: String::new(),
+            engine: String::new(),
+        };
+        record_history(&t, "cli");
+        std::env::remove_var("PARDON_HOME");
+        assert!(!dir.path().join("history.sqlite").exists());
+    }
+
+    #[test]
+    fn record_history_persists_success() {
+        let _lock = crate::output::HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("PARDON_HOME", dir.path());
+        let t = Translation {
+            source_lang: Lang::En,
+            target_lang: Lang::Zh,
+            text: "hello".into(),
+            translation: "你好".into(),
+            engine: "glm".into(),
+        };
+        record_history(&t, "cli");
+        let h = pardon_core::history::History::open(&pardon_core::history::history_path().unwrap())
+            .unwrap();
+        let list = h.list(10).unwrap();
+        std::env::remove_var("PARDON_HOME");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].text, "hello");
+        assert_eq!(list[0].origin, "cli");
     }
 }
