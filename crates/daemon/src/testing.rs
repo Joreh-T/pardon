@@ -1,5 +1,5 @@
-//! 测试专用假实现（main.rs 仅在 `#[cfg(test)]` 下挂载）：翻译器/通知器/
-//! 剪贴板。handler 与 clip 的测试共用；Task 9 提升为共享测试模块。
+//! 测试专用假实现（lib.rs 以 `#[doc(hidden)] pub mod` 常驻挂载，供单元与
+//! 集成测试共用）：翻译器/通知器/剪贴板。
 
 use crate::state::Translator;
 use pardon_core::dict::WordCard;
@@ -10,12 +10,15 @@ use std::sync::Mutex;
 /// 记录调用的假翻译器：translate 返回预设表（文本→结果），未命中返回
 /// 标准成功句；lookup 返回预设词卡。`delayed` 构造的实例改用映射函数
 /// 生成译文（带延迟，剪贴板合并消费测试用）。
+/// 延迟映射函数类型（clippy type_complexity 规避别名）。
+type Mapper = Box<dyn Fn(&str) -> Translation + Send + Sync>;
+
 pub struct FakeTranslator {
     pub(crate) results: Mutex<Vec<(String, Translation)>>,
     pub(crate) lookup_card: Mutex<WordCard>,
     pub(crate) delay_ms: u64,
     pub(crate) calls: Mutex<Vec<String>>,
-    mapper: Option<Box<dyn Fn(&str) -> Translation + Send + Sync>>,
+    mapper: Option<Mapper>,
 }
 
 impl FakeTranslator {
@@ -38,6 +41,14 @@ impl FakeTranslator {
             delay_ms: 0,
             calls: Mutex::new(vec![]),
             mapper: None,
+        }
+    }
+
+    /// 预设「文本→译文」映射表构造（未命中回落标准成功句）。
+    pub fn with_map(map: Vec<(String, Translation)>) -> Self {
+        Self {
+            results: Mutex::new(map),
+            ..Self::new()
         }
     }
 
@@ -99,7 +110,8 @@ impl Translator for FakeTranslator {
 
 #[derive(Default)]
 pub struct FakeNotifier {
-    pub(crate) sent: Mutex<Vec<(String, String)>>,
+    /// 已发通知 (summary, body)。pub：集成测试直接断言。
+    pub sent: Mutex<Vec<(String, String)>>,
     pub(crate) fail: bool,
 }
 impl Notifier for FakeNotifier {
@@ -115,16 +127,36 @@ impl Notifier for FakeNotifier {
     }
 }
 
-#[derive(Default)]
 pub struct FakeClipboard {
     pub(crate) written: Mutex<Vec<String>>,
+    /// `read_primary` 的返回值（HTTP 触发口测试用；默认空串成功）。
+    pub primary_result: anyhow::Result<String>,
+    /// `read_clipboard` 的返回值。
+    pub clipboard_result: anyhow::Result<String>,
+}
+impl Default for FakeClipboard {
+    fn default() -> Self {
+        // anyhow::Error 未实现 Default → 手写（derive 不可用）
+        Self {
+            written: Mutex::new(vec![]),
+            primary_result: Ok(String::new()),
+            clipboard_result: Ok(String::new()),
+        }
+    }
 }
 impl ClipboardAccess for FakeClipboard {
     fn read_clipboard(&self) -> anyhow::Result<String> {
-        Ok(String::new())
+        match &self.clipboard_result {
+            Ok(s) => Ok(s.clone()),
+            // anyhow::Error 非 Clone → 以链式文案重建（anyhow Display alternate）
+            Err(e) => Err(anyhow::anyhow!("{e:#}")),
+        }
     }
     fn read_primary(&self) -> anyhow::Result<String> {
-        Ok(String::new())
+        match &self.primary_result {
+            Ok(s) => Ok(s.clone()),
+            Err(e) => Err(anyhow::anyhow!("{e:#}")),
+        }
     }
     fn write_clipboard(&self, text: &str) -> anyhow::Result<()> {
         self.written.lock().unwrap().push(text.to_string());
