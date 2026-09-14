@@ -1,29 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { reload } from './api';
 import { escapeHtml } from './render';
+import { decideWrites, effectiveValue, FIELDS } from './settings-logic';
+import type { FieldSpec, FormValues } from './settings-logic';
 import './style.css';
-
-interface FieldSpec {
-  key: string;
-  table: 'daemon' | null;
-  label: string;
-  kind: 'bool' | 'number' | 'select';
-  options?: string[]; // kind === 'select'
-  restart?: boolean;
-  hint?: string;
-}
-
-// 键/表与 Rust 侧 WRITABLE 白名单一一对应（多写会被 config_set 拒绝）。
-const FIELDS: FieldSpec[] = [
-  { key: 'auto_translate', table: 'daemon', label: '复制即翻译（剪贴板自动监听）', kind: 'bool' },
-  { key: 'popup', table: 'daemon', label: '翻译结果用 GUI 弹窗展示（无 GUI 时回退通知）', kind: 'bool' },
-  { key: 'show_word_badge', table: 'daemon', label: '词卡显示学习徽章行', kind: 'bool' },
-  { key: 'copy_translation', table: 'daemon', label: '译文自动写回剪贴板', kind: 'bool' },
-  { key: 'notify_timeout_ms', table: 'daemon', label: '通知显示时长（毫秒）', kind: 'number' },
-  { key: 'max_text_bytes', table: 'daemon', label: '自动翻译文本上限（字节）', kind: 'number' },
-  { key: 'dedup_window_ms', table: 'daemon', label: '同内容去重窗口（毫秒）', kind: 'number' },
-  { key: 'default_engine', table: null, label: '默认引擎', kind: 'select', options: ['llm', 'youdao', 'bing'], restart: true, hint: '重启 pardond 后生效' },
-];
 
 interface SanitizedProvider {
   id?: string;
@@ -32,9 +12,6 @@ interface SanitizedProvider {
   model?: string;
   has_api_key?: boolean;
 }
-
-const current = (f: FieldSpec, cfg: Record<string, unknown>): unknown =>
-  f.table ? (cfg[f.table] as Record<string, unknown>)?.[f.key] : cfg[f.key];
 
 function fieldHTML(f: FieldSpec, v: unknown): string {
   const id = `f-${f.key}`;
@@ -71,7 +48,7 @@ function providersHTML(cfg: Record<string, unknown>): string {
 async function load(): Promise<void> {
   const cfg = (await invoke('read_config')) as Record<string, unknown>;
   document.getElementById('form')!.innerHTML = FIELDS.map((f) =>
-    fieldHTML(f, current(f, cfg)),
+    fieldHTML(f, effectiveValue(f, cfg)),
   ).join('');
   document.getElementById('providers')!.innerHTML = providersHTML(cfg);
 }
@@ -81,17 +58,17 @@ async function save(): Promise<void> {
   const btnRestart = document.getElementById('btn-restart') as HTMLButtonElement;
   try {
     const cfg = (await invoke('read_config')) as Record<string, unknown>;
-    const changed: FieldSpec[] = [];
+    const values: FormValues = {};
     for (const f of FIELDS) {
       const el = document.getElementById(`f-${f.key}`) as HTMLInputElement | HTMLSelectElement;
-      const now = f.kind === 'bool' ? (el as HTMLInputElement).checked : el.value;
-      // 统一按字符串比较（checkbox → 'true'/'false'，number → '5000'）
-      if (String(now) !== String(current(f, cfg) ?? '')) {
-        const value = f.kind === 'number' ? Number(now) : now;
-        await invoke('config_set', { table: f.table, key: f.key, value });
-        changed.push(f);
-      }
+      values[f.key] = f.kind === 'bool' ? (el as HTMLInputElement).checked : el.value;
     }
+    // 写入决策（缺失键以 core 默认为基准、空数字跳过）在纯函数层，单测覆盖。
+    const writes = decideWrites(FIELDS, cfg, values);
+    for (const w of writes) {
+      await invoke('config_set', { table: w.table, key: w.key, value: w.value });
+    }
+    const changed = FIELDS.filter((f) => writes.some((w) => w.key === f.key));
     const { restart_required } = await reload();
     if (restart_required || changed.some((f) => f.restart)) {
       msg.textContent = '已保存。引擎相关改动需重启 pardond 生效。';

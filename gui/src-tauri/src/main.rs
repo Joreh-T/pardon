@@ -105,22 +105,30 @@ async fn ipc_request(
 
 #[tauri::command]
 async fn speak(text: String) -> Result<(), String> {
-    std::process::Command::new("pardon")
+    let mut child = tokio::process::Command::new("pardon")
         .arg("speak")
         .arg(&text)
         .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("spawn `pardon speak`: {e}"))
+        .map_err(|e| format!("spawn `pardon speak`: {e}"))?;
+    // 后台收尸：不等待发音进程退出，但也不留僵尸子进程
+    tokio::spawn(async move {
+        let _ = child.wait().await;
+    });
+    Ok(())
 }
 
 /// 兜底启动：主窗口检测到未连接 pardond 时显示按钮，经 CLI 分离启动
 /// （`pardon daemon start` 内部 spawn 独立进程组后立即返回，不会挂起）。
+/// 失败（非零退出）返回 stderr 供前端展示诊断。
 #[tauri::command]
 async fn pardon_daemon_start() -> Result<String, String> {
     let out = std::process::Command::new("pardon")
         .args(["daemon", "start"])
         .output()
         .map_err(|e| format!("spawn `pardon daemon start`: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).to_string());
+    }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
@@ -148,6 +156,22 @@ fn gui_config_path() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("pardon")
         .join("config.toml")
+}
+
+/// 递归剔除任意位置的机密键名（合法 schema 里这两键只存在于 providers 内，
+/// 而那段已被置换过滤——零误伤）。
+fn strip_secret_keys(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            map.remove("api_key");
+            map.remove("api_key_env");
+            for (_k, child) in map.iter_mut() {
+                strip_secret_keys(child);
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_secret_keys),
+        _ => {}
+    }
 }
 
 /// 读配置文本 → 脱敏 JSON（供 [`read_config`] 与测试共用）。
@@ -179,6 +203,7 @@ fn parse_sanitized_config(text: &str) -> Result<serde_json::Value, String> {
         Some(p) => *p = serde_json::json!([]),
         None => {}
     }
+    strip_secret_keys(&mut v);
     Ok(v)
 }
 
@@ -357,6 +382,42 @@ fn main() {
                 let _ = w.show();
                 let _ = w.set_focus();
             });
+            // daemon 托盘的 show_window 事件（ipc.rs 转发为同名 tauri 事件）：
+            // GUI 在跑时点托盘「打开主窗口」/「设置」由此消费——聚焦已有窗口，
+            // 窗口被关闭（已销毁）则重建/新建。
+            let win_handle = app.handle().clone();
+            app.listen("show_window", move |event| {
+                let kind = serde_json::from_str::<serde_json::Value>(event.payload())
+                    .ok()
+                    .and_then(|v| v["kind"].as_str().map(str::to_string))
+                    .unwrap_or_default();
+                match kind.as_str() {
+                    "settings" => {
+                        if let Some(w) = win_handle.get_webview_window("settings") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        } else {
+                            let _ = create_settings_window(&win_handle);
+                        }
+                    }
+                    // "main" 及兜底：重建镜像 tauri.conf.json 的 main 定义
+                    _ => {
+                        if let Some(w) = win_handle.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        } else {
+                            let _ = tauri::WebviewWindowBuilder::new(
+                                &win_handle,
+                                "main",
+                                tauri::WebviewUrl::App("index.html".into()),
+                            )
+                            .title("pardon")
+                            .inner_size(760.0, 520.0)
+                            .build();
+                        }
+                    }
+                }
+            });
             if std::env::args().any(|a| a == "--settings") {
                 create_settings_window(app.handle())?;
             }
@@ -438,6 +499,38 @@ auto_translate = true
         assert!(!s.contains("system_prompt"));
         assert!(!s.contains("user_prompt_template"));
         // 白名单外的 daemon 键原样保留（非 providers 区不做过滤）
+        assert_eq!(v["daemon"]["auto_translate"], true);
+    }
+
+    /// 机密键名在 providers 之外的任意位置（根表 / [llm] 直下 / [daemon] 下）
+    /// 也不得透出——脱敏约束是绝对的，不因位置而豁免。
+    #[test]
+    fn sanitized_config_strips_secret_keys_outside_providers() {
+        let text = r#"
+api_key = "sk-root-secret"
+
+[llm]
+api_key_env = "PARDON_ROOT_KEY"
+
+[daemon]
+api_key = "sk-daemon-secret"
+auto_translate = true
+"#;
+        let v = parse_sanitized_config(text).unwrap();
+        let s = v.to_string();
+        // 三位置各一条：值与键名都不出现
+        assert!(!s.contains("sk-root-secret"), "root api_key value: {s}");
+        assert!(
+            !s.contains("PARDON_ROOT_KEY"),
+            "[llm] api_key_env value: {s}"
+        );
+        assert!(
+            !s.contains("sk-daemon-secret"),
+            "[daemon] api_key value: {s}"
+        );
+        assert!(!s.contains("\"api_key\""), "{s}");
+        assert!(!s.contains("\"api_key_env\""), "{s}");
+        // 同层的非机密键不受影响（零误伤）
         assert_eq!(v["daemon"]["auto_translate"], true);
     }
 

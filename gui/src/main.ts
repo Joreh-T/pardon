@@ -57,7 +57,12 @@ function wire(): void {
   });
   $('#btn-settings').addEventListener('click', () => void invoke('open_settings'));
   $('#btn-start-daemon').addEventListener('click', async () => {
-    await invoke('pardon_daemon_start');
+    try {
+      await invoke('pardon_daemon_start');
+    } catch (e) {
+      // 启动失败（非零退出）→ stderr 文案写状态栏；1.5s 后照常刷新连接状态
+      $('#conn').textContent = `启动失败：${String(e)}`;
+    }
     setTimeout(() => void refreshStatus(), 1500);
   });
   $('#btn-speak').addEventListener('click', () => {

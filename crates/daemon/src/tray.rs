@@ -135,8 +135,14 @@ fn open_window(state: &DaemonState, kind: ShowWindowKind) {
                 ShowWindowKind::Main => "--main",
                 ShowWindowKind::Settings => "--settings",
             };
-            match std::process::Command::new("pardon-gui").arg(arg).spawn() {
-                Ok(_) => log::info!("spawned pardon-gui {arg}"),
+            match tokio::process::Command::new("pardon-gui").arg(arg).spawn() {
+                // 后台收尸：不等待 GUI 退出，但也不留僵尸子进程
+                Ok(mut child) => {
+                    tokio::spawn(async move {
+                        let _ = child.wait().await;
+                    });
+                    log::info!("spawned pardon-gui {arg}");
+                }
                 Err(e) => log::warn!("spawn pardon-gui failed: {e} (is it installed?)"),
             }
         }
