@@ -83,6 +83,18 @@ fn popup_resize(app: tauri::AppHandle, height: f64) {
     }
 }
 
+/// 最近一条 popup 事件负载。webview 冷启动竞态（Rust 侧 listen 先于 JS
+/// 的 DOMContentLoaded 注册监听）期间到达的事件会被 JS 错过——先落缓存，
+/// webview 就绪后经 [`popup_last`] 重放（webview 整个 GUI 生命周期只
+/// 加载一次，不存在「旧内容复活」问题）。
+pub struct PopupCache(pub std::sync::Mutex<Option<serde_json::Value>>);
+
+/// 冷启动重放：popup.ts 就绪时拉取竞态窗口内错过的 popup 负载。
+#[tauri::command]
+fn popup_last(cache: tauri::State<PopupCache>) -> Option<serde_json::Value> {
+    cache.0.lock().unwrap().clone()
+}
+
 #[tauri::command]
 async fn ipc_request(
     method: String,
@@ -147,7 +159,8 @@ fn main() {
             hide_popup,
             popup_resize,
             popup_pos_load,
-            popup_pos_save
+            popup_pos_save,
+            popup_last
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -170,9 +183,16 @@ fn main() {
             .build()?;
             // daemon 的 popup 事件已由 ipc.rs 转发为同名 tauri 事件（JS 侧
             // popup.ts 监听渲染内容），Rust 侧只做窗口动作：
-            // 恢复记忆位置（若有）→ show → focus。
+            // 恢复记忆位置（若有）→ show → focus。负载先落 PopupCache——
+            // webview 冷启动竞态窗口内错过的事件由 popup_last 重放。
+            app.manage(PopupCache(std::sync::Mutex::new(None)));
             let popup_handle = app.handle().clone();
-            app.listen("popup", move |_event| {
+            app.listen("popup", move |event| {
+                if let Ok(params) = serde_json::from_str::<serde_json::Value>(event.payload()) {
+                    if let Some(cache) = popup_handle.try_state::<PopupCache>() {
+                        *cache.0.lock().unwrap() = Some(params);
+                    }
+                }
                 let Some(w) = popup_handle.get_webview_window("popup") else {
                     return;
                 };
