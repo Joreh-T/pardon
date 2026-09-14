@@ -1,4 +1,13 @@
-//! pardond 守护进程入口。Task 9 lib 化：模块面移交 lib.rs，
-//! 本文件暂为占位；Task 10 充实（HTTP 触发口 + 剪贴板监听 + 信号处理）。
+//! pardond 入口（逻辑在 pardon_daemon::run，便于集成测试复用 lib）。
 
-fn main() {}
+use clap::Parser;
+
+#[tokio::main]
+async fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let args = pardon_daemon::Args::parse();
+    if let Err(e) = pardon_daemon::run(args).await {
+        eprintln!("pardond: {e:#}");
+        std::process::exit(1);
+    }
+}

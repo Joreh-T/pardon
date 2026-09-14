@@ -2218,6 +2218,7 @@ dependencies = [
  "pardon-core",
  "pardon-platform",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
