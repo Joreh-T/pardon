@@ -35,3 +35,4 @@ wiremock = "0.6"
 regex = "1"
 anyhow = "1"
 thiserror = "2"
+interprocess = { version = "2.4", features = ["tokio"] }

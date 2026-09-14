@@ -20,6 +20,7 @@ async-trait.workspace = true
 log.workspace = true
 env_logger.workspace = true
 clap.workspace = true
+interprocess.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true

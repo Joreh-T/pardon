@@ -5,10 +5,13 @@ pub mod events;
 pub mod handler;
 pub mod http;
 pub mod state;
+pub mod status;
 /// 测试假实现。常驻编译（不能 cfg(test)——集成测试以普通依赖编译 lib，
 /// cfg(test) 模块对外不可见）；doc(hidden) 使其不出现在文档。
 #[doc(hidden)]
 pub mod testing;
+pub mod trigger;
+pub mod uds;
 pub mod watcher;
 
 use anyhow::Context;
@@ -119,6 +122,16 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         actual
     );
 
+    // UDS IPC（GUI）：绑定失败只 error 日志降级，daemon 不退——HTTP 口仍
+    // 可用（占用场景是另一 pardond 或残留套接字，与 HTTP bind 失败不同源）
+    let uds_state = state.clone();
+    let uds_shutdown = state.shutdown.clone();
+    tokio::spawn(async move {
+        if let Err(e) = uds::serve(uds_state, uds_shutdown).await {
+            log::error!("ipc server: {e:#}");
+        }
+    });
+
     let shutdown_state = state.clone();
     axum::serve(listener, http::router(state))
         .with_graceful_shutdown(shutdown_signal(shutdown_state))
@@ -131,8 +144,9 @@ async fn shutdown_signal(state: Arc<state::DaemonState>) {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("install SIGTERM handler");
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {},
-        _ = term.recv() => {},
+        // 信号路径也要广播：uds::serve 在等同一 Notify（清理套接字文件）
+        _ = tokio::signal::ctrl_c() => state.shutdown.notify_waiters(),
+        _ = term.recv() => state.shutdown.notify_waiters(),
         _ = state.shutdown.notified() => {},
     }
 }

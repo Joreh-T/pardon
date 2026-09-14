@@ -1,7 +1,8 @@
 //! localhost HTTP 触发口（spec §5.4：给 niri bind curl、脚本与其他客户端）。
+//! 触发与状态逻辑抽至 trigger.rs / status.rs，与 UDS IPC 共用。
 
-use crate::handler::{handle_text, HandleResult, Origin};
 use crate::state::DaemonState;
+use crate::trigger::TriggerOutcome;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -53,57 +54,23 @@ struct TriggerResponse {
 }
 
 async fn trigger(state: Arc<DaemonState>, primary: bool) -> Response {
-    let clip = state.clipboard.clone();
-    let read = tokio::task::spawn_blocking(move || {
-        if primary {
-            clip.read_primary()
-        } else {
-            clip.read_clipboard()
-        }
-    })
-    .await
-    .unwrap_or_else(|e| Err(anyhow::anyhow!("clipboard read task failed: {e}")));
-
-    let text = match read {
-        Ok(t) => t,
-        Err(e) => {
-            let msg = format!("{e:#}");
-            let lower = msg.to_lowercase();
-            // 「无文本」判据（spike 发现 5 实测 wl-clipboard 2.2.1 文案 +
-            // 未验证分支的兜底词）：not available as requested type 为真实
-            // stderr；no suitable/no selection/empty 覆盖空选区等路径
-            if lower.contains("not available as requested type")
-                || lower.contains("no suitable")
-                || lower.contains("no selection")
-                || lower.contains("empty")
-            {
-                return Json(TriggerResponse {
-                    notified: false,
-                    reason: Some("no text available".into()),
-                    translation: None,
-                })
-                .into_response();
-            }
-            return err_json(StatusCode::SERVICE_UNAVAILABLE, &msg);
-        }
-    };
-
-    match handle_text(&state, &text, Origin::Trigger).await {
-        HandleResult::Handled {
-            translation,
+    match crate::trigger::run(&state, primary).await {
+        TriggerOutcome::NoText => Json(TriggerResponse {
+            notified: false,
+            reason: Some("no text available".into()),
+            translation: None,
+        })
+        .into_response(),
+        TriggerOutcome::Handled {
             notified,
+            translation,
         } => Json(TriggerResponse {
             notified,
             reason: None,
             translation: Some(translation),
         })
         .into_response(),
-        HandleResult::Skipped(reason) => Json(TriggerResponse {
-            notified: false,
-            reason: Some(reason.into()),
-            translation: None,
-        })
-        .into_response(),
+        TriggerOutcome::Failed(msg) => err_json(StatusCode::SERVICE_UNAVAILABLE, &msg),
     }
 }
 
@@ -115,43 +82,15 @@ async fn trigger_clipboard(State(state): State<Arc<DaemonState>>) -> Response {
     trigger(state, false).await
 }
 
-#[derive(Serialize)]
-struct StatusResponse {
-    version: &'static str,
-    uptime_s: u64,
-    clipboard_watching: bool,
-    auto_translate: bool,
-    default_engine: String,
-    counters: StatusCounters,
-}
-
-#[derive(Serialize)]
-struct StatusCounters {
-    clipboard_events: u64,
-    translations: u64,
-    notifications: u64,
-    triggers: u64,
-}
-
 async fn get_status(State(state): State<Arc<DaemonState>>) -> Response {
-    let cfg = state.cfg_snapshot();
-    Json(StatusResponse {
-        version: pardon_core::VERSION,
-        uptime_s: state.started.elapsed().as_secs(),
-        clipboard_watching: state.clipboard_watching.load(Ordering::Relaxed),
-        auto_translate: cfg.daemon.auto_translate,
-        default_engine: cfg.default_engine.clone(),
-        counters: StatusCounters {
-            clipboard_events: state.counters.clipboard_events.load(Ordering::Relaxed),
-            translations: state.counters.translations.load(Ordering::Relaxed),
-            notifications: state.counters.notifications.load(Ordering::Relaxed),
-            triggers: state.counters.triggers.load(Ordering::Relaxed),
-        },
-    })
-    .into_response()
+    Json(crate::status::snapshot(&state)).into_response()
 }
 
 async fn post_shutdown(State(state): State<Arc<DaemonState>>) -> Response {
+    // 多个等待者（axum graceful shutdown、uds::serve）都要醒：notify_waiters
+    // 广播；补一次 notify_one 存许可——晚到才 await notified() 的调用方
+    // （如 http_test）仍能立即通过
+    state.shutdown.notify_waiters();
     state.shutdown.notify_one();
     Json(serde_json::json!({ "status": "shutting down" })).into_response()
 }

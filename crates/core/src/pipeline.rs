@@ -16,7 +16,7 @@ use crate::engine::{Chain, Engine, EngineError, TranslateRequest};
 use crate::lang::{self, Lang};
 use crate::router::{self, Route};
 use anyhow::Context;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -67,7 +67,7 @@ impl Engine for LlmEngine {
 }
 
 /// 一次翻译结果（CLI JSON 契约的句式输出）。
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Translation {
     pub source_lang: Lang,
     pub target_lang: Lang,
