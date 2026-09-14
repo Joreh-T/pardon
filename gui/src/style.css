@@ -1,0 +1,18 @@
+/* 最小暗色底（占位级样式，Task 8/9/10 逐步充实）。 */
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 12px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}

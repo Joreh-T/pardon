@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "pardon-gui",
+  "version": "0.1.0",
+  "identifier": "com.pardon.gui",
+  "build": { "frontendDist": "../dist" },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      { "label": "main", "title": "pardon", "url": "index.html", "width": 760, "height": 520 }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": { "active": false, "icon": ["icons/icon.png"] }
+}

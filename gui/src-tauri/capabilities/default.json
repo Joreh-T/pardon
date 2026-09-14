@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "pardon-gui all windows",
+  "windows": ["main", "popup", "settings"],
+  "permissions": ["core:default"]
+}
