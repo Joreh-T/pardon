@@ -10,6 +10,7 @@ pub mod status;
 /// cfg(test) 模块对外不可见）；doc(hidden) 使其不出现在文档。
 #[doc(hidden)]
 pub mod testing;
+pub mod tray;
 pub mod trigger;
 pub mod uds;
 pub mod watcher;
@@ -131,6 +132,9 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             log::error!("ipc server: {e:#}");
         }
     });
+
+    // 系统托盘（headless / 无 D-Bus → spawn_tray 内部降级 warn，不影响 daemon）
+    tokio::spawn(tray::spawn_tray(state.clone()));
 
     let shutdown_state = state.clone();
     axum::serve(listener, http::router(state))

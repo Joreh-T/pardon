@@ -7,6 +7,11 @@ use pardon_core::pipeline::Translation;
 use pardon_platform::{ClipboardAccess, Notifier};
 use std::sync::Mutex;
 
+/// 篡改 `PARDON_CONFIG` 的单测共用串行锁（进程级全局：state.rs 的
+/// apply_config 测试与 tray.rs 的持久化测试都要改它，各自持有局部锁会互踩）。
+/// tokio Mutex：守卫需跨 await 持有，std 锁会触发 clippy::await_holding_lock。
+pub static CONFIG_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// 记录调用的假翻译器：translate 返回预设表（文本→结果），未命中返回
 /// 标准成功句；lookup 返回预设词卡。`delayed` 构造的实例改用映射函数
 /// 生成译文（带延迟，剪贴板合并消费测试用）。

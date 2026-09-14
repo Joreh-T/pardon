@@ -204,6 +204,60 @@ pub fn write_default(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 以 toml_edit 原位写入单个值（保留文件注释与排版）。`table = None` 写
+/// 根表；文件/表不存在则创建（父目录一并补齐）。写后**不**校验（调用方
+/// 负责语义；daemon reload 时 [`load`] 会整体校验）。
+pub fn set_value(
+    path: &Path,
+    table: Option<&str>,
+    key: &str,
+    value: toml_edit::Value,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+    // 读不到（含文件不存在）→ 空文档起步，写回时落盘新文件
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = text.parse().context("parse config for in-place edit")?;
+    let target: &mut dyn toml_edit::TableLike = match table {
+        Some(name) => doc
+            .entry(name)
+            .or_insert_with(|| {
+                // 缺表建表：implicit 使纯新增场景不额外打印表头歧义
+                let mut t = toml_edit::Table::new();
+                t.set_implicit(true);
+                toml_edit::Item::Table(t)
+            })
+            .as_table_mut()
+            .context("config section is not a table")?,
+        None => doc.as_table_mut(),
+    };
+    // 已有键且为值项：旧值的 decor（行注释/前后空白）搬到新值上再覆盖
+    // ——insert 是整项替换，直接插新值会丢掉行尾注释
+    let mut new_val = value;
+    if let Some(item) = target.get_mut(key) {
+        if let Some(old) = item.as_value_mut() {
+            std::mem::swap(old.decor_mut(), new_val.decor_mut());
+        }
+    }
+    target.insert(key, toml_edit::Item::Value(new_val));
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, doc.to_string())?;
+    Ok(())
+}
+
+/// 原位写布尔（见 [`set_value`]）。
+pub fn set_bool(path: &Path, table: Option<&str>, key: &str, v: bool) -> anyhow::Result<()> {
+    set_value(path, table, key, v.into())
+}
+
+/// 原位写整数（见 [`set_value`]）。
+pub fn set_i64(path: &Path, table: Option<&str>, key: &str, v: i64) -> anyhow::Result<()> {
+    set_value(path, table, key, v.into())
+}
+
 const DEFAULT_CONFIG_TOML: &str = r#"# pardon 配置文件
 # 路径：~/.config/pardon/config.toml（可用 PARDON_CONFIG 环境变量覆盖）
 #
@@ -673,6 +727,42 @@ http_bind = "not an addr"
             let toml = format!("[daemon]\n{bad}\n");
             assert!(load_from_str(&toml).is_err(), "{bad} should be invalid");
         }
+    }
+
+    #[test]
+    fn set_bool_preserves_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        std::fs::write(
+            &p,
+            "# 我的注释\n[daemon]\nshow_word_badge = false # 行注释\n",
+        )
+        .unwrap();
+        set_bool(&p, Some("daemon"), "show_word_badge", true).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("# 我的注释"), "{text}");
+        assert!(text.contains("# 行注释"), "{text}");
+        assert!(text.contains("show_word_badge = true"), "{text}");
+    }
+
+    #[test]
+    fn set_i64_creates_missing_table_and_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        set_i64(&p, Some("daemon"), "notify_timeout_ms", 3000).unwrap();
+        let cfg = load_from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(cfg.daemon.notify_timeout_ms, 3000);
+    }
+
+    #[test]
+    fn set_bool_root_level() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        std::fs::write(&p, "default_engine = \"youdao\"\n").unwrap();
+        // 根表键不属于 [daemon]——本测试只验证 None 走根表不 panic
+        set_bool(&p, None, "copy_translation", true).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("copy_translation = true"), "{text}");
     }
 
     #[test]

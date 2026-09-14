@@ -92,14 +92,11 @@ mod tests {
     use super::*;
     use crate::testing::*;
 
-    /// PARDON_CONFIG 是进程级全局 → 篡改它的测试串行化（tokio Mutex：
-    /// 守卫需跨 await 持有，std 锁会触发 clippy::await_holding_lock）。
-    static CFG_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    /// daemon 字段热生效 + 引擎字段 → restart_required。
+    /// PARDON_CONFIG 是进程级全局 → 篡改它的测试共用串行锁
+    /// （testing::CONFIG_ENV_LOCK；tray.rs 的持久化测试也持有它）。
     #[tokio::test]
     async fn apply_config_live_fields_and_restart_flag() {
-        let _lock = CFG_LOCK.lock().await;
+        let _lock = crate::testing::CONFIG_ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let cfg_path = dir.path().join("config.toml");
         std::fs::write(&cfg_path, "[daemon]\nauto_translate = false\n").unwrap();
