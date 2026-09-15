@@ -1,6 +1,13 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
+    <script>
+      try {
+        var t = localStorage.getItem('pardon-theme');
+        if (t !== 'catppuccin-mocha' && t !== 'catppuccin-latte' && t !== 'macos-light' && t !== 'nord') t = 'auto';
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>pardon 设置</title>
@@ -9,6 +16,13 @@
   <body>
     <div class="app settings">
       <h1>pardon 设置</h1>
+      <section id="theme-group">
+        <h2>界面主题</h2>
+        <label class="field">
+          <select id="f-theme"></select>
+          <span class="field-label">界面主题<span class="dim">三窗口即时生效</span></span>
+        </label>
+      </section>
       <div id="form"></div>
       <section class="providers-wrap">
         <h2 class="providers-head">LLM providers<button id="btn-provider-add">新增 provider</button></h2>

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { status } from './api';
 import { renderCardHTML, renderTranslationHTML } from './render';
 import type { Translation, WordCard } from './types';
+import { bootstrapTheme } from './theme'; // 顶层副作用：加载即应用持久化主题
 import './style.css';
 
 interface PopupPayload {
@@ -31,6 +32,8 @@ async function renderPopup(p: PopupPayload): Promise<void> {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  // 设置页切换主题后广播；各窗口重读 localStorage（同源共享）重应用
+  void listen('theme-changed', () => bootstrapTheme());
   // Esc 全局关闭（弹窗 show 时已聚焦，keydown 必达）
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') void invoke('hide_popup');

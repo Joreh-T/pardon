@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { reload } from './api';
 import { escapeHtml } from './render';
 import { decideWrites, effectiveValue, FIELDS } from './settings-logic';
@@ -14,12 +15,29 @@ import {
   validateForm,
 } from './providers';
 import type { ProviderForm, ProviderRow } from './providers';
+import { applyTheme, bootstrapTheme, currentTheme, normalizeTheme, THEMES } from './theme'; // 顶层副作用：加载即应用持久化主题
 import './style.css';
 
 /** 最近一次 load 的 provider 行（行内按钮与清除 key 后重填表单都按 index 取）。 */
 let rows: ProviderRow[] = [];
 /** 正在编辑的 provider（null = 表单隐藏）；hasApiKey 驱动 placeholder 与清除按钮。 */
 let editing: { index: number | null; hasApiKey: boolean } | null = null;
+
+/** 主题下拉（#theme-group 独立分组）：本地即改即生效，再广播其余窗口。
+ *  主题是 GUI 本地偏好（localStorage），不属于 daemon 配置——不进 #form
+ *  的读/写/保存流程，也不随 provider 写操作的重渲染重建。 */
+function mountThemeRow(): void {
+  const sel = document.getElementById('f-theme') as HTMLSelectElement | null;
+  if (!sel) return;
+  const now = currentTheme();
+  sel.innerHTML = THEMES.map(
+    (t) => `<option value="${t.name}" ${t.name === now ? 'selected' : ''}>${t.label}</option>`,
+  ).join('');
+  sel.addEventListener('change', () => {
+    applyTheme(normalizeTheme(sel.value));
+    void invoke('broadcast_theme');
+  });
+}
 
 function fieldHTML(f: FieldSpec, v: unknown): string {
   const id = `f-${f.key}`;
@@ -273,6 +291,9 @@ async function restart(): Promise<void> {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  mountThemeRow();
+  // 本窗口切换主题时自身也被广播命中；bootstrapTheme 幂等，无副作用差
+  void listen('theme-changed', () => bootstrapTheme());
   load().catch((e) => {
     const msg = document.getElementById('msg');
     if (msg) {

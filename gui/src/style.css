@@ -1,18 +1,97 @@
-/* 暗色主题（延续脚手架的 catppuccin-mocha 底色，与桌面协调）。 */
+/* ── 主题变量 ─────────────────────────────────────────────
+   :root 即 catppuccin-mocha（默认暗色基调，兼作 data-theme 缺席与
+   显式 'catppuccin-mocha' 的取值组）。四套预设覆盖同一变量集合：
+   --bg 页面底 / --bg-elev 浮层（卡片、表单、按钮底）/ --bg-hover 悬停
+   / --input-bg 输入控件底 / --fg、--fg-dim 文字 / --accent 强调色 +
+   --solid-fg 实色按钮上的文字 / --border 边框 / --ok、--warn、--fail
+   状态色。auto 是唯一走 prefers-color-scheme 的主题（亮色映射 latte 组，
+   暗色回落 :root）。 */
 
 :root {
   color-scheme: dark;
   --bg: #1e1e2e;
-  --bg-raised: #262637;
+  --bg-elev: #262637;
   --bg-hover: #31324a;
-  --border: #45475a;
+  --input-bg: #1e1e2e;
   --fg: #cdd6f4;
   --fg-dim: #9399b2;
   --accent: #89b4fa;
-  --green: #a6e3a1;
-  --red: #f38ba8;
-  --yellow: #f9e2af;
+  --solid-fg: #1e1e2e;
+  --border: #45475a;
+  --ok: #a6e3a1;
+  --warn: #f9e2af;
+  --fail: #f38ba8;
   --mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;
+}
+
+/* Catppuccin 拿铁（亮） */
+:root[data-theme='catppuccin-latte'] {
+  color-scheme: light;
+  --bg: #eff1f5;
+  --bg-elev: #e6e9ef;
+  --bg-hover: #dce0e8;
+  --input-bg: #eff1f5;
+  --fg: #4c4f69;
+  --fg-dim: #6c6f85;
+  --accent: #8839ef;
+  --solid-fg: #eff1f5;
+  --border: #bcc0cc;
+  --ok: #40a02b;
+  --warn: #df8e1d;
+  --fail: #d20f39;
+}
+
+/* macOS 浅色（清新）：系统浅色观感 */
+:root[data-theme='macos-light'] {
+  color-scheme: light;
+  --bg: #f5f5f7;
+  --bg-elev: #ffffff;
+  --bg-hover: #e8e8ed;
+  --input-bg: #ffffff;
+  --fg: #1d1d1f;
+  --fg-dim: #86868b;
+  --accent: #0071e3;
+  --solid-fg: #ffffff;
+  --border: #d2d2d7;
+  --ok: #248a3d;
+  --warn: #b45309;
+  --fail: #ff3b30;
+}
+
+/* Nord（暗蓝） */
+:root[data-theme='nord'] {
+  color-scheme: dark;
+  --bg: #2e3440;
+  --bg-elev: #3b4252;
+  --bg-hover: #434c5e;
+  --input-bg: #2e3440;
+  --fg: #eceff4;
+  --fg-dim: #d8dee9;
+  --accent: #88c0d0;
+  --solid-fg: #2e3440;
+  --border: #4c566a;
+  --ok: #a3be8c;
+  --warn: #ebcb8b;
+  --fail: #bf616a;
+}
+
+/* 跟随系统：系统亮色映射 latte 组（暗色回落 :root 的 mocha 组） */
+@media (prefers-color-scheme: light) {
+  :root[data-theme='auto'] {
+    color-scheme: light;
+    --bg: #eff1f5;
+    --bg-elev: #e6e9ef;
+    --bg-hover: #dce0e8;
+    --input-bg: #eff1f5;
+    --fg: #4c4f69;
+    --fg-dim: #6c6f85;
+    --accent: #8839ef;
+    --solid-fg: #eff1f5;
+    --border: #bcc0cc;
+    --ok: #40a02b;
+    --warn: #df8e1d;
+    --fail: #d20f39;
+  }
 }
 
 * {
@@ -53,7 +132,7 @@ header {
 button {
   font: inherit;
   color: var(--fg);
-  background: var(--bg-raised);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 12px;
@@ -81,7 +160,7 @@ button:hover {
   font: inherit;
   font-family: var(--mono);
   color: var(--fg);
-  background: var(--bg-raised);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -97,7 +176,7 @@ button:hover {
   padding: 0 18px;
   background: var(--accent);
   border-color: var(--accent);
-  color: #1e1e2e;
+  color: var(--solid-fg);
   font-weight: 600;
 }
 
@@ -111,7 +190,7 @@ button:hover {
   flex: 1;
   min-height: 120px;
   overflow-y: auto;
-  background: var(--bg-raised);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
@@ -131,7 +210,7 @@ button:hover {
 
 .card .phonetic {
   font-family: var(--mono);
-  color: var(--yellow);
+  color: var(--warn);
   margin: 2px 0 6px;
 }
 
@@ -154,7 +233,7 @@ button:hover {
 }
 
 .card .badge {
-  color: var(--green);
+  color: var(--ok);
 }
 
 .card .suggest {
@@ -194,7 +273,7 @@ button:hover {
 
 .trans-text.fail,
 .empty.fail {
-  color: var(--red);
+  color: var(--fail);
 }
 
 .empty {
@@ -214,7 +293,7 @@ button:hover {
   height: 130px;
   flex: none;
   overflow-y: auto;
-  background: var(--bg-raised);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px;
@@ -299,14 +378,14 @@ button:hover {
   transform: translateX(-50%);
   z-index: 10;
   padding: 6px 20px;
-  background: var(--red);
-  border-color: var(--red);
-  color: #1e1e2e;
+  background: var(--fail);
+  border-color: var(--fail);
+  color: var(--solid-fg);
   font-weight: 600;
 }
 
 #btn-start-daemon:hover {
-  background: var(--red);
+  background: var(--fail);
   filter: brightness(1.1);
 }
 
@@ -332,11 +411,13 @@ button:hover {
   font-size: 12px;
 }
 
-#form {
+/* 表单与主题分组共用同一浮层盒子样式 */
+#form,
+#theme-group {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: var(--bg-raised);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
@@ -363,7 +444,7 @@ button:hover {
   width: 110px;
   font-family: var(--mono);
   color: var(--fg);
-  background: var(--bg);
+  background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 3px 8px;
@@ -374,7 +455,7 @@ button:hover {
   width: 110px;
   font: inherit;
   color: var(--fg);
-  background: var(--bg);
+  background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 3px 8px;
@@ -386,11 +467,16 @@ button:hover {
   border-color: var(--accent);
 }
 
+/* 主题下拉的选项是较长的中文标签，110px 会截断 */
+#f-theme {
+  width: 190px;
+}
+
 .field-label .restart {
   margin-left: 6px;
   font-size: 11px;
-  color: var(--yellow);
-  border: 1px solid var(--yellow);
+  color: var(--warn);
+  border: 1px solid var(--warn);
   border-radius: 999px;
   padding: 0 6px;
 }
@@ -400,7 +486,7 @@ button:hover {
 }
 
 .providers-wrap {
-  background: var(--bg-raised);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
@@ -439,7 +525,7 @@ button:hover {
   margin-left: auto;
   flex: none;
   font-size: 11px;
-  color: var(--green);
+  color: var(--ok);
 }
 
 .provider-line .key-miss {
@@ -483,7 +569,7 @@ button:hover {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--fg);
-  background: var(--bg);
+  background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 3px 8px;
@@ -508,25 +594,25 @@ button:hover {
 }
 
 #btn-restart {
-  background: var(--yellow);
-  border-color: var(--yellow);
-  color: #1e1e2e;
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--solid-fg);
   font-weight: 600;
 }
 
 #btn-restart:hover {
-  background: var(--yellow);
+  background: var(--warn);
   filter: brightness(1.1);
 }
 
 #msg {
   min-height: 18px;
   font-size: 12px;
-  color: var(--green);
+  color: var(--ok);
 }
 
 #msg.fail {
-  color: var(--red);
+  color: var(--fail);
 }
 
 /* 滚动条与暗色协调（webkit webview） */

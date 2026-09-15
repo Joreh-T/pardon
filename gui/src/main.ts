@@ -3,6 +3,7 @@ import { historyList, lookup, status, translate } from './api';
 import { escapeHtml, renderCardHTML, renderHistoryHTML, renderTranslationHTML } from './render';
 import type { HistoryEntry } from './types';
 import { invoke } from '@tauri-apps/api/core';
+import { bootstrapTheme } from './theme'; // 顶层副作用：加载即应用持久化主题
 import './style.css';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -82,6 +83,8 @@ function wire(): void {
     }
   });
   void listen('ipc-up', () => void refreshStatus());
+  // 设置页切换主题后广播；各窗口重读 localStorage（同源共享）重应用
+  void listen('theme-changed', () => bootstrapTheme());
 }
 
 window.addEventListener('DOMContentLoaded', () => {

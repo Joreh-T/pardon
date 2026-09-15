@@ -143,6 +143,14 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// 主题切换广播：设置页写完 localStorage 后调用，三窗口监听
+/// `theme-changed` 重读共享存储重应用（payload 为空，前端忽略）。
+#[tauri::command]
+fn broadcast_theme(app: tauri::AppHandle) {
+    use tauri::Emitter;
+    let _ = app.emit("theme-changed", ());
+}
+
 /// 配置文件路径：`PARDON_CONFIG`（非空）优先，缺省
 /// `~/.config/pardon/config.toml`（与 pardon_core 的 config_path 规则一致；
 /// GUI 不依赖 core，此文件按协议复制路径规则）。
@@ -544,6 +552,7 @@ fn main() {
             speak,
             pardon_daemon_start,
             open_settings,
+            broadcast_theme,
             read_config,
             config_set,
             provider_upsert,

@@ -1,6 +1,13 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
+    <script>
+      try {
+        var t = localStorage.getItem('pardon-theme');
+        if (t !== 'catppuccin-mocha' && t !== 'catppuccin-latte' && t !== 'macos-light' && t !== 'nord') t = 'auto';
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>pardon</title>
