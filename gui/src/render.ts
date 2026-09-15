@@ -47,7 +47,8 @@ const badgeLine = (c: WordCard): string => {
   return parts.length ? `<div class="badge">${parts.map(escapeHtml).join(' · ')}</div>` : '';
 };
 
-export function renderCardHTML(c: WordCard): string {
+/// showBadge 默认 false＝关，与 daemon `show_word_badge` 默认一致。
+export function renderCardHTML(c: WordCard, showBadge = false): string {
   if (!c.found) {
     const sug = (c.suggestions ?? []).length
       ? `<div class="suggest">未收录；试试：${(c.suggestions ?? []).slice(0, 3).map(escapeHtml).join('、')}</div>`
@@ -60,7 +61,7 @@ export function renderCardHTML(c: WordCard): string {
     ${posLines(c)}
     ${(c.definition ?? []).map((d) => `<div class="def">${escapeHtml(d)}</div>`).join('')}
     ${exchangeLine(c)}
-    ${badgeLine(c)}
+    ${showBadge ? badgeLine(c) : ''}
   </section>`;
 }
 

@@ -24,5 +24,6 @@ export interface HistoryEntry {
 export interface StatusInfo {
   version: string; uptime_s: number; clipboard_watching: boolean;
   auto_translate: boolean; default_engine: string; gui_connected: number;
+  show_word_badge: boolean;
   counters: { clipboard_events: number; translations: number; notifications: number; triggers: number };
 }

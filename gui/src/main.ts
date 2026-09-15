@@ -9,6 +9,8 @@ const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)
 const $input = () => document.querySelector<HTMLTextAreaElement>('#input')!;
 
 let historyEntries: HistoryEntry[] = [];
+// 词卡徽章开关：status 轮询缓存；status 不可达时保持上次值（启动默认关）。
+let showBadge = false;
 
 async function refreshHistory(): Promise<void> {
   try {
@@ -30,7 +32,7 @@ async function doTranslate(text: string): Promise<void> {
     return;
   }
   let html = '';
-  if (card.status === 'fulfilled' && card.value.found) html += renderCardHTML(card.value);
+  if (card.status === 'fulfilled' && card.value.found) html += renderCardHTML(card.value, showBadge);
   html += renderTranslationHTML(t2.value);
   $('#result').innerHTML = html;
   void refreshHistory();
@@ -39,6 +41,7 @@ async function doTranslate(text: string): Promise<void> {
 async function refreshStatus(): Promise<void> {
   try {
     const s = await status();
+    showBadge = s.show_word_badge === true;
     $('#conn').textContent = `已连接 pardond ${s.version} · 引擎 ${s.default_engine}`;
     $('#btn-start-daemon').hidden = true;
   } catch {

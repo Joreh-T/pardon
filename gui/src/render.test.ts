@@ -20,7 +20,7 @@ describe('escapeHtml', () => {
 
 describe('renderCardHTML', () => {
   it('renders word, phonetic, pos lines, exchange, badges', () => {
-    const h = renderCardHTML(card);
+    const h = renderCardHTML(card, true);
     expect(h).toContain('run');
     expect(h).toContain('/rʌn/');
     expect(h).toContain('v. 跑；运转');
@@ -36,6 +36,18 @@ describe('renderCardHTML', () => {
     const h = renderCardHTML(miss);
     expect(h).toContain('未收录');
     expect(h).toContain('running');
+  });
+});
+
+describe('renderCardHTML badge gating', () => {
+  const cardWithBadge: WordCard = card;
+  it('hides badge line when showBadge=false (default)', () => {
+    expect(renderCardHTML(cardWithBadge)).not.toContain('柯林斯');
+    expect(renderCardHTML(cardWithBadge, false)).not.toContain('牛津核心');
+  });
+  it('shows badge line when showBadge=true', () => {
+    expect(renderCardHTML(cardWithBadge, true)).toContain('柯林斯');
+    expect(renderCardHTML(cardWithBadge, true)).toContain('四级');
   });
 });
 

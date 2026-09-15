@@ -1,5 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { status } from './api';
 import { renderCardHTML, renderTranslationHTML } from './render';
 import type { Translation, WordCard } from './types';
 import './style.css';
@@ -11,9 +12,12 @@ interface PopupPayload {
 
 async function renderPopup(p: PopupPayload): Promise<void> {
   const el = document.getElementById('popup-content')!;
+  // 徽章开关渲染时取 status（弹窗常驻进程，无轮询缓存）；取不到 → 关。
+  const s = await status().catch(() => null);
+  const showBadge = s?.show_word_badge === true;
   const card = p.card ?? null; // daemon 侧 card 键可能缺席（句子翻译）
   let html = '';
-  if (card) html += renderCardHTML(card);
+  if (card) html += renderCardHTML(card, showBadge);
   html += renderTranslationHTML(p.translation);
   el.innerHTML = html;
   document.title = p.translation.text.slice(0, 30) || 'pardon';
