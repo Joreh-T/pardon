@@ -30,7 +30,7 @@ struct TranslateArgs {
     /// Target language: auto | en | zh (auto = detected from text) (only effective with an explicit --engine; with --engine auto the direction is auto-detected)
     #[arg(long, default_value = "auto")]
     target: String,
-    /// Engine: auto | llm | youdao | bing (single engine gets no fallback)
+    /// Engine: auto | llm | google | youdao | bing (single engine gets no fallback)
     #[arg(long, default_value = "auto")]
     engine: String,
     /// Compact single-line JSON (non-stream output)

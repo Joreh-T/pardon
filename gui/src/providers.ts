@@ -89,7 +89,7 @@ export function validateEngineProviderPair(
 ): string | null {
   if (engine !== 'llm') return null;
   if (rows.some((r) => r.id === provider)) return null;
-  return '默认引擎为 llm 时必须选择一个有效的 provider（先把 provider 加进来，或把默认引擎改为 youdao/bing）';
+  return '默认引擎为 llm 时必须选择一个有效的 provider（先把 provider 加进来，或把默认引擎改为 google/youdao/bing）';
 }
 
 /** default_provider 的字段规格。**不进 FIELDS/decideWrites**：options 随

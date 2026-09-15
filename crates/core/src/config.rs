@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// "llm" | "youdao" | "bing"；缺省 "youdao"。
-    /// 注意：有道/Bing 的免费 web 端点已于 2026-09 失效，句子翻译需配置 LLM provider（见 README）。
+    /// "llm" | "google" | "youdao" | "bing"；缺省 "youdao"。
+    /// 注意：有道/Bing 的免费 web 端点已于 2026-09 失效；Google 走非官方
+    /// 免费端点（可用兜底）；句子翻译需配置 LLM provider（见 README）。
     #[serde(default = "default_engine_youdao")]
     pub default_engine: String,
     #[serde(default)]
@@ -261,8 +262,9 @@ pub fn set_i64(path: &Path, table: Option<&str>, key: &str, v: i64) -> anyhow::R
 const DEFAULT_CONFIG_TOML: &str = r#"# pardon 配置文件
 # 路径：~/.config/pardon/config.toml（可用 PARDON_CONFIG 环境变量覆盖）
 #
-# 默认引擎：llm | youdao | bing。注意：有道/Bing 的免费 web 端点已于
-# 2026-09 失效，句子翻译需配置 LLM provider（见下方示例）；
+# 默认引擎：llm | google | youdao | bing。注意：有道/Bing 的免费 web 端点
+# 已于 2026-09 失效；google 走非官方免费端点（可用兜底，可能失效）。
+# 句子翻译建议配置 LLM provider（见下方示例）；
 # 查词（离线词典）与发音不受影响。
 default_engine = "youdao"
 
@@ -292,12 +294,12 @@ providers = []
 impl AppConfig {
     /// 校验配置；失败时 `field` 携带字段路径（如 `llm.providers[0].id`）。
     pub fn validate(&self) -> Result<(), ConfigError> {
-        const KNOWN_ENGINES: [&str; 3] = ["llm", "youdao", "bing"];
+        const KNOWN_ENGINES: [&str; 4] = ["llm", "google", "youdao", "bing"];
         if !KNOWN_ENGINES.contains(&self.default_engine.as_str()) {
             return Err(ConfigError::Invalid {
                 field: "default_engine".into(),
                 reason: format!(
-                    "unknown engine {:?}, expected one of llm/youdao/bing",
+                    "unknown engine {:?}, expected one of llm/google/youdao/bing",
                     self.default_engine
                 ),
             });
@@ -465,14 +467,20 @@ model = "deepseek-chat"
 
     #[test]
     fn unknown_default_engine_is_invalid() {
-        let err = load_from_str(r#"default_engine = "google""#).unwrap_err();
+        let err = load_from_str(r#"default_engine = "deepl""#).unwrap_err();
         match &err {
             ConfigError::Invalid { field, reason } => {
                 assert_eq!(field, "default_engine");
-                assert!(reason.contains("google"), "reason: {reason}");
+                assert!(reason.contains("deepl"), "reason: {reason}");
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn google_is_a_known_engine() {
+        let cfg = load_from_str(r#"default_engine = "google""#).unwrap();
+        assert_eq!(cfg.default_engine, "google");
     }
 
     #[test]

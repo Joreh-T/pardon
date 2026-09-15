@@ -33,7 +33,7 @@ export const FIELDS: FieldSpec[] = [
   { key: 'notify_timeout_ms', table: 'daemon', label: '通知显示时长（毫秒）', kind: 'number' },
   { key: 'max_text_bytes', table: 'daemon', label: '自动翻译文本上限（字节）', kind: 'number' },
   { key: 'dedup_window_ms', table: 'daemon', label: '同内容去重窗口（毫秒）', kind: 'number' },
-  { key: 'default_engine', table: null, label: '默认引擎', kind: 'select', options: ['llm', 'youdao', 'bing'], restart: true, hint: '重启 pardond 后生效' },
+  { key: 'default_engine', table: null, label: '默认引擎', kind: 'select', options: ['llm', 'google', 'youdao', 'bing'], restart: true, hint: '重启 pardond 后生效' },
 ];
 
 /** 字段默认值，对齐 core DaemonConfig / 根表默认（crates/core/src/config.rs；

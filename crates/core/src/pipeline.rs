@@ -2,7 +2,7 @@
 //!
 //! `from_config` 容错加载词典：sqlite 缺失时空内存库降级（stderr 提示导入
 //! 命令），CLI 仍可翻译；引擎链按 `default_engine` 组装（llm 可用时
-//! [llm, youdao, bing]，否则 [youdao, bing]）。
+//! [llm, google, youdao, bing]，否则 [google, youdao, bing]）。
 
 use crate::config::{AppConfig, ProviderType};
 use crate::dict::cedict::CedictDb;
@@ -10,6 +10,7 @@ use crate::dict::ecdict_query::EcdictDb;
 use crate::dict::{DictProvider, WordCard};
 use crate::engine::anthropic::{AnthropicConfig, AnthropicEngine};
 use crate::engine::bing::BingEngine;
+use crate::engine::google::GoogleEngine;
 use crate::engine::openai::{OpenAiConfig, OpenAiEngine, OLLAMA_DEFAULT_BASE_URL};
 use crate::engine::youdao::YoudaoEngine;
 use crate::engine::{Chain, Engine, EngineError, TranslateRequest};
@@ -73,7 +74,7 @@ pub struct Translation {
     pub target_lang: Lang,
     pub text: String,
     pub translation: String,
-    /// 成功引擎名（"ecdict"/"cedict"/"youdao"/"bing"/provider id）；
+    /// 成功引擎名（"ecdict"/"cedict"/"google"/"youdao"/"bing"/provider id）；
     /// 全链失败时为空串（`translation` 同为空串）。
     pub engine: String,
 }
@@ -99,7 +100,9 @@ pub struct Pipeline {
     pub ecdict: EcdictDb,
     pub cedict: CedictDb,
     /// 默认引擎链：`default_engine == "llm"` 且 provider 可用时
-    /// [llm, youdao, bing]，否则 [youdao, bing]。
+    /// [llm, google, youdao, bing]，否则 [google, youdao, bing]。
+    /// Google 是活的免费端点、排第一兜底；youdao/bing 端点已死但保留
+    /// 殿后（显式 `--engine youdao/bing` 仍可用）。
     pub chain: Chain,
     /// 默认 LLM provider 构造出的引擎；未指定 default_provider 时 None。
     /// `Arc` 使同一实例同时进入 chain 与流式路径。
@@ -116,8 +119,12 @@ impl Pipeline {
         let cedict = load_cedict(&dict_dir.join("cedict.sqlite"))?;
 
         let llm = build_llm(cfg);
-        let mut engines: Vec<Arc<dyn Engine>> =
-            vec![Arc::new(YoudaoEngine::new()), Arc::new(BingEngine::new())];
+        // Google 免费（非官方）端点当前可用，作链首兜底；youdao/bing 已死仍殿后
+        let mut engines: Vec<Arc<dyn Engine>> = vec![
+            Arc::new(GoogleEngine::new()),
+            Arc::new(YoudaoEngine::new()),
+            Arc::new(BingEngine::new()),
+        ];
         if cfg.default_engine == "llm" {
             if let Some(llm) = &llm {
                 engines.insert(0, llm.clone());
@@ -256,10 +263,11 @@ impl Pipeline {
         }
     }
 
-    /// 显式单引擎链（CLI `-e` 用）：youdao / bing / llm（须已配置 provider）；
-    /// 未知引擎名或 llm 未配置 → Err。
+    /// 显式单引擎链（CLI `-e` 用）：google / youdao / bing / llm（须已配置
+    /// provider）；未知引擎名或 llm 未配置 → Err。
     pub fn chain_with(&self, engine_name: &str) -> anyhow::Result<Chain> {
         let engine: Arc<dyn Engine> = match engine_name {
+            "google" => Arc::new(GoogleEngine::new()),
             "youdao" => Arc::new(YoudaoEngine::new()),
             "bing" => Arc::new(BingEngine::new()),
             "llm" => self.llm.clone().ok_or_else(|| {
@@ -267,7 +275,7 @@ impl Pipeline {
             })?,
             other => {
                 return Err(anyhow::anyhow!(
-                    "unknown engine {other:?}, expected one of llm/youdao/bing"
+                    "unknown engine {other:?}, expected one of llm/google/youdao/bing"
                 ))
             }
         };

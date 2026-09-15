@@ -4,8 +4,8 @@ Pardon my French — offline dictionary + LLM translation CLI, Chinese↔English
 built for nvim and terminals.
 
 > M1 状态：CLI（lookup / translate / speak / config）+ 本地词典 + 引擎链
-> （LLM → 有道 → 必应，自动降级）已可用；nvim 插件在本仓库 `nvim/` 目录
-> （见下文 [nvim 集成](#nvim-集成)）。文档与打包仍在完善中。
+> （LLM → Google → 有道 → 必应，自动降级）已可用；nvim 插件在本仓库
+> `nvim/` 目录（见下文 [nvim 集成](#nvim-集成)）。文档与打包仍在完善中。
 
 ## 安装
 
@@ -37,9 +37,11 @@ $ pardon lookup 你好 --json
 
 ### 3. 翻译
 
-单词自动走离线词典路由（不联网）；句子走引擎链。注意：web 引擎
-（有道/Bing）的免费端点已于 2026-09 失效，句子翻译需配置 LLM
-provider（示例见下方[配置](#配置)节）；查词（离线词典）与发音不受影响。
+单词自动走离线词典路由（不联网）；句子走引擎链（LLM → Google → 有道
+→ 必应，自动降级）。Google 走非官方免费端点（Chrome 词典扩展同款，
+无需配置），可能失效或限流；有道/Bing 的免费端点已于 2026-09 失效
+（仅作殿后兜底）。要稳定的句子翻译质量请配置 LLM provider（示例见下方
+[配置](#配置)节）；查词（离线词典）与发音不受影响。
 
 ```bash
 $ echo "The quick brown fox jumps over the lazy dog." | pardon translate --stdin --stream
@@ -51,8 +53,9 @@ $ echo "The quick brown fox jumps over the lazy dog." | pardon translate --stdin
 `--stream` 逐行输出 JSONL 事件（`meta` → `delta`… → `result`）；不加
 `--stream` 可用 `--json` 拿单行结果 JSON。常用参数：
 
-- `--engine llm|youdao|bing|auto`：指定引擎（指定后不做降级链）；
-  `auto` 会按语言自动选择并允许失败降级到下一个引擎。
+- `--engine llm|google|youdao|bing|auto`：指定引擎（指定后不做降级链）；
+  `auto` 会按语言自动选择并允许失败降级到下一个引擎；
+  `--engine google` 显式走 Google 免费端点。
 - `--source` / `--target en|zh|auto`：仅在显式指定 `--engine` 时生效；
   `--engine auto` 模式下方向由文本自动检测。
 - `--timeout N`：整次操作超时秒数（默认 30；超时输出
@@ -82,7 +85,7 @@ OpenAI 兼容端点（以 DeepSeek 为例）、Anthropic、本地 Ollama）。�
 走环境变量（`api_key_env`），不要把明文 key 写进配置文件：
 
 ```toml
-default_engine = "llm"           # llm | youdao | bing（youdao/bing 免费端点已失效，句子翻译建议 llm）
+default_engine = "llm"           # llm | google | youdao | bing（youdao/bing 免费端点已失效，google 为非官方免费端点，句子翻译建议 llm）
 
 [llm]
 default_provider = "deepseek"
@@ -122,6 +125,8 @@ model = "qwen2.5:7b"
 - 每个 provider 的 `base_url`、`model` 必填；`id` 唯一。
 - `type = "ollama"` 无需密钥；其余类型需要 `api_key_env`（或
   `api_key`，明文写进配置文件需自担风险，优先级高于环境变量）。
+- `default_engine = "google"` 时不需要任何配置（默认兜底链第一位即
+  Google），但走非官方免费端点，可能失效或限流。
 - `default_engine = "youdao" | "bing"` 时不需要任何配置，但其免费端点
   已于 2026-09 失效（见上文[翻译](#3-翻译)节），句子翻译建议配置 LLM。
 

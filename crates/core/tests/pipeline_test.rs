@@ -1,7 +1,8 @@
 //! 集成测试：Pipeline 组装词典 + 引擎链 + 流式。
 //!
-//! `PARDON_HOME` / `PARDON_YOUDAO_BASE` 是进程级环境变量且测试默认并行：
-//! 所有触碰它们的测试经 `ENV_LOCK` 串行（`TestEnv` 持锁期间 set，Drop 时还原）。
+//! `PARDON_HOME` / `PARDON_YOUDAO_BASE` / `PARDON_GOOGLE_BASE` 是进程级
+//! 环境变量且测试默认并行：所有触碰它们的测试经 `ENV_LOCK` 串行
+//! （`TestEnv` 持锁期间 set，Drop 时还原）。
 
 use pardon_core::config::{load_from_str, AppConfig, LlmConfig, ProviderConfig, ProviderType};
 use pardon_core::dict::cedict::CedictDb;
@@ -20,25 +21,33 @@ const SENTENCE_ZH: &str = "请给我那本书";
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-/// 测试期内设置 `PARDON_HOME` / `PARDON_YOUDAO_BASE`；Drop 还原并释放锁。
+/// 测试期内设置 `PARDON_HOME` / `PARDON_YOUDAO_BASE` / `PARDON_GOOGLE_BASE`；
+/// Drop 还原并释放锁。
 struct TestEnv {
     old_home: Option<String>,
     old_youdao: Option<String>,
+    old_google: Option<String>,
     _lock: MutexGuard<'static, ()>,
 }
 
-fn set_env(home: &Path, youdao_base: Option<&str>) -> TestEnv {
+fn set_env(home: &Path, youdao_base: Option<&str>, google_base: Option<&str>) -> TestEnv {
     let lock = ENV_LOCK.lock().unwrap();
     let old_home = std::env::var("PARDON_HOME").ok();
     let old_youdao = std::env::var("PARDON_YOUDAO_BASE").ok();
+    let old_google = std::env::var("PARDON_GOOGLE_BASE").ok();
     std::env::set_var("PARDON_HOME", home);
     match youdao_base {
         Some(base) => std::env::set_var("PARDON_YOUDAO_BASE", base),
         None => std::env::remove_var("PARDON_YOUDAO_BASE"),
     }
+    match google_base {
+        Some(base) => std::env::set_var("PARDON_GOOGLE_BASE", base),
+        None => std::env::remove_var("PARDON_GOOGLE_BASE"),
+    }
     TestEnv {
         old_home,
         old_youdao,
+        old_google,
         _lock: lock,
     }
 }
@@ -52,6 +61,10 @@ impl Drop for TestEnv {
         match self.old_youdao.take() {
             Some(b) => std::env::set_var("PARDON_YOUDAO_BASE", b),
             None => std::env::remove_var("PARDON_YOUDAO_BASE"),
+        }
+        match self.old_google.take() {
+            Some(b) => std::env::set_var("PARDON_GOOGLE_BASE", b),
+            None => std::env::remove_var("PARDON_GOOGLE_BASE"),
         }
     }
 }
@@ -79,6 +92,15 @@ async fn mount_youdao(server: &MockServer) {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "translateResult": [[{"src": SENTENCE, "tgt": SENTENCE_ZH}]]
         })))
+        .mount(server)
+        .await;
+}
+
+/// google mock：SENTENCE → `[SENTENCE_ZH]`（首元素即译文）。
+async fn mount_google(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(query_param("q", SENTENCE))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([SENTENCE_ZH])))
         .mount(server)
         .await;
 }
@@ -114,7 +136,7 @@ fn req_en2zh() -> TranslateRequest {
 #[test]
 fn lookup_en_uses_ecdict_and_fills_suggestions_on_miss() {
     let home = fixture_home();
-    let _env = set_env(home.path(), None);
+    let _env = set_env(home.path(), None, None);
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
 
     let card = p.lookup("run");
@@ -133,7 +155,7 @@ fn lookup_en_uses_ecdict_and_fills_suggestions_on_miss() {
 #[test]
 fn lookup_zh_uses_cedict() {
     let home = fixture_home();
-    let _env = set_env(home.path(), None);
+    let _env = set_env(home.path(), None, None);
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
 
     let card = p.lookup("你好");
@@ -144,7 +166,7 @@ fn lookup_zh_uses_cedict() {
 #[tokio::test]
 async fn translate_word_route_returns_card_text_from_ecdict() {
     let home = fixture_home();
-    let _env = set_env(home.path(), None);
+    let _env = set_env(home.path(), None, None);
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
 
     let t = p.translate("run").await;
@@ -155,11 +177,34 @@ async fn translate_word_route_returns_card_text_from_ecdict() {
 }
 
 #[tokio::test]
-async fn translate_sentence_without_llm_uses_youdao() {
+async fn translate_sentence_without_llm_uses_google_first() {
+    let home = fixture_home();
+    let server = MockServer::start().await;
+    mount_google(&server).await;
+    mount_youdao(&server).await;
+    let _env = set_env(
+        home.path(),
+        Some(server.uri().as_str()),
+        Some(server.uri().as_str()),
+    );
+    let p = Pipeline::from_config(&AppConfig::default()).unwrap();
+
+    let t = p.translate(SENTENCE).await;
+    assert_eq!(t.engine, "google", "默认链 google 应排第一");
+    assert_eq!(t.translation, SENTENCE_ZH);
+}
+
+/// google 失败（死端口）→ 降级到链内下一位 youdao。
+#[tokio::test]
+async fn google_failure_falls_back_to_youdao() {
     let home = fixture_home();
     let server = MockServer::start().await;
     mount_youdao(&server).await;
-    let _env = set_env(home.path(), Some(server.uri().as_str()));
+    let _env = set_env(
+        home.path(),
+        Some(server.uri().as_str()),
+        Some("http://127.0.0.1:1"),
+    );
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
 
     let t = p.translate(SENTENCE).await;
@@ -170,7 +215,7 @@ async fn translate_sentence_without_llm_uses_youdao() {
 #[tokio::test]
 async fn translate_stream_word_emits_single_delta_with_full_card_text() {
     let home = fixture_home();
-    let _env = set_env(home.path(), None);
+    let _env = set_env(home.path(), None, None);
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
 
     let mut deltas = Vec::new();
@@ -191,7 +236,7 @@ async fn translate_stream_word_emits_single_delta_with_full_card_text() {
 #[tokio::test]
 async fn from_config_with_missing_dicts_degrades_to_empty() {
     let dir = tempfile::tempdir().unwrap();
-    let _env = set_env(dir.path(), None);
+    let _env = set_env(dir.path(), None, None);
     let p = Pipeline::from_config(&AppConfig::default()).expect("词典缺失时应以空库降级构造成功");
 
     let card = p.lookup("run");
@@ -207,8 +252,12 @@ async fn from_config_with_missing_dicts_degrades_to_empty() {
 async fn translate_stream_sentence_without_llm_emits_single_delta() {
     let home = fixture_home();
     let server = MockServer::start().await;
-    mount_youdao(&server).await;
-    let _env = set_env(home.path(), Some(server.uri().as_str()));
+    mount_google(&server).await;
+    let _env = set_env(
+        home.path(),
+        Some(server.uri().as_str()),
+        Some(server.uri().as_str()),
+    );
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
 
     let mut deltas = Vec::new();
@@ -217,7 +266,7 @@ async fn translate_stream_sentence_without_llm_emits_single_delta() {
         .await
         .unwrap();
     assert_eq!(deltas, vec![SENTENCE_ZH]);
-    assert_eq!(t.engine, "youdao");
+    assert_eq!(t.engine, "google");
     assert_eq!(t.translation, SENTENCE_ZH);
 }
 
@@ -234,8 +283,12 @@ async fn translate_stream_sentence_via_llm_forwards_deltas_and_skips_empty() {
         .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
         .mount(&server)
         .await;
-    let _env = set_env(home.path(), Some(server.uri().as_str()));
-    // default_engine 仍为 youdao：链 = [youdao, bing]，但流式优先走 LLM
+    let _env = set_env(
+        home.path(),
+        Some(server.uri().as_str()),
+        Some(server.uri().as_str()),
+    );
+    // default_engine 仍为 youdao：链 = [google, youdao, bing]，但流式优先走 LLM
     let p = Pipeline::from_config(&cfg_llm(&server.uri(), "youdao")).unwrap();
 
     let mut deltas = Vec::new();
@@ -252,13 +305,17 @@ async fn translate_stream_sentence_via_llm_forwards_deltas_and_skips_empty() {
 async fn translate_stream_llm_failure_falls_back_to_chain() {
     let home = fixture_home();
     let server = MockServer::start().await;
-    // LLM 端点 500 → 流式失败 → 回退引擎链（youdao mock 兜底）
+    // LLM 端点 500 → 流式失败 → 回退引擎链（google mock 兜底，链首）
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
-    mount_youdao(&server).await;
-    let _env = set_env(home.path(), Some(server.uri().as_str()));
+    mount_google(&server).await;
+    let _env = set_env(
+        home.path(),
+        Some(server.uri().as_str()),
+        Some(server.uri().as_str()),
+    );
     let p = Pipeline::from_config(&cfg_llm(&server.uri(), "youdao")).unwrap();
 
     let mut deltas = Vec::new();
@@ -267,7 +324,7 @@ async fn translate_stream_llm_failure_falls_back_to_chain() {
         .await
         .unwrap();
     assert_eq!(deltas, vec![SENTENCE_ZH], "回退后完整译文应作单次 delta");
-    assert_eq!(t.engine, "youdao");
+    assert_eq!(t.engine, "google");
     assert_eq!(t.translation, SENTENCE_ZH);
 }
 
@@ -287,7 +344,11 @@ async fn translate_with_default_engine_llm_puts_llm_first_in_chain() {
         })))
         .mount(&server)
         .await;
-    let _env = set_env(home.path(), Some(server.uri().as_str()));
+    let _env = set_env(
+        home.path(),
+        Some(server.uri().as_str()),
+        Some(server.uri().as_str()),
+    );
     let p = Pipeline::from_config(&cfg_llm(&server.uri(), "llm")).unwrap();
 
     let t = p.translate(SENTENCE).await;
@@ -299,9 +360,18 @@ async fn translate_with_default_engine_llm_puts_llm_first_in_chain() {
 async fn chain_with_builds_single_engine_chain() {
     let home = fixture_home();
     let server = MockServer::start().await;
+    mount_google(&server).await;
     mount_youdao(&server).await;
-    let _env = set_env(home.path(), Some(server.uri().as_str()));
+    let _env = set_env(
+        home.path(),
+        Some(server.uri().as_str()),
+        Some(server.uri().as_str()),
+    );
     let p = Pipeline::from_config(&AppConfig::default()).unwrap();
+
+    let chain = p.chain_with("google").unwrap();
+    let (out, name) = chain.translate(&req_en2zh()).await.unwrap();
+    assert_eq!((out.as_str(), name), (SENTENCE_ZH, "google"));
 
     let chain = p.chain_with("youdao").unwrap();
     let (out, name) = chain.translate(&req_en2zh()).await.unwrap();
@@ -317,7 +387,7 @@ async fn chain_with_builds_single_engine_chain() {
 #[test]
 fn ollama_provider_honors_base_url_and_prompt_overrides() {
     let dir = tempfile::tempdir().unwrap();
-    let _env = set_env(dir.path(), None);
+    let _env = set_env(dir.path(), None, None);
     let cfg = load_from_str(
         r#"
 default_engine = "youdao"
@@ -363,7 +433,7 @@ user_prompt_template = "TRANSLATE {text}"
 #[test]
 fn ollama_provider_with_empty_base_url_falls_back_to_11434() {
     let dir = tempfile::tempdir().unwrap();
-    let _env = set_env(dir.path(), None);
+    let _env = set_env(dir.path(), None, None);
     let cfg = AppConfig {
         llm: LlmConfig {
             default_provider: "local".into(),

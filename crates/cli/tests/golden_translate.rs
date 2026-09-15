@@ -30,6 +30,7 @@ fn pardon() -> Command {
 /// 引擎 base 全部指向 mock：不慎走到 bing/真实网络时得到 404 而非外网请求。
 fn mocked(mock: &MockServer) -> Command {
     let mut c = pardon();
+    c.env("PARDON_GOOGLE_BASE", mock.uri());
     c.env("PARDON_YOUDAO_BASE", mock.uri());
     c.env("PARDON_BING_BASE", mock.uri());
     c
@@ -233,6 +234,39 @@ async fn explicit_engine_bing_two_step_success() {
     assert_eq!(v["translation"], SENTENCE_ZH);
 }
 
+/// 5b. --engine google（显式单引擎，不降级）：mock `/translate_a/t` 成功 →
+///     result engine=="google"，exit 0。
+#[tokio::test]
+async fn explicit_engine_google_success() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/translate_a/t"))
+        .and(query_param("client", "dict-chrome-ex"))
+        .and(query_param("sl", "en"))
+        .and(query_param("tl", "zh"))
+        .and(query_param("q", SENTENCE))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([SENTENCE_ZH])))
+        .mount(&server)
+        .await;
+
+    let out = mocked(&server)
+        .args(["translate", "--json", "--engine", "google", SENTENCE])
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["type"], "result");
+    assert_eq!(v["engine"], "google");
+    assert_eq!(v["source"], "en");
+    assert_eq!(v["target"], "zh");
+    assert_eq!(v["text"], SENTENCE);
+    assert_eq!(v["translation"], SENTENCE_ZH);
+}
+
 /// 6. 空文本（无参数、无 --stdin）→ exit 2。
 #[test]
 fn empty_text_no_args_no_stdin_exits_2() {
@@ -243,7 +277,7 @@ fn empty_text_no_args_no_stdin_exits_2() {
 /// 只走 stderr（code "engine"）。词路由无释义不算失败（见 6c）。
 #[tokio::test]
 async fn total_chain_failure_exits_2_stderr_only() {
-    // 无任何 mock 挂载：youdao/bing 全部 404 → 全链失败
+    // 无任何 mock 挂载：google/youdao/bing 全部 404 → 全链失败
     let server = MockServer::start().await;
     let assert = mocked(&server)
         .args(["translate", "--json", SENTENCE])

@@ -1,8 +1,8 @@
 //! `pardon translate [TEXT…|--stdin]`：词/句翻译 + JSONL 流式契约（spec §5.3）。
 //!
 //! 引擎选择：`--engine auto`（默认）→ pipeline 默认链（词典路由 + 引擎兜底）；
-//! `llm|youdao|bing` → [`Pipeline::chain_with`] 单引擎链（无兜底，失败即错，
-//! 也不做词典路由）。退出码裁决：全链失败（`translation` 与 `engine` 皆空）
+//! `llm|google|youdao|bing` → [`Pipeline::chain_with`] 单引擎链（无兜底，
+//! 失败即错，也不做词典路由）。退出码裁决：全链失败（`translation` 与 `engine` 皆空）
 //! 或显式引擎失败 → stderr Error JSONL（code "engine"）+ exit 2；超时 →
 //! code "timeout" + exit 124；词路由命中但无释义（译文空、引擎非空）不是
 //! 错误 → 照常输出 exit 0。
@@ -39,7 +39,7 @@ pub async fn run(args: &TranslateArgs) -> anyhow::Result<i32> {
 }
 
 /// `--stream`：meta → delta* → result，stdout 逐行 flush；Meta.engine 为
-/// 旗标值（auto/llm/youdao/bing），实际引擎以 Result 事件为准。
+/// 旗标值（auto/llm/google/youdao/bing），实际引擎以 Result 事件为准。
 async fn run_stream(
     args: &TranslateArgs,
     pipeline: &Pipeline,
@@ -217,7 +217,7 @@ fn collect_text(args: &TranslateArgs) -> anyhow::Result<String> {
 }
 
 /// 方向解析：auto → `lang::direction(text)`；显式 en/zh → 覆盖（其他值报错）。
-/// 注意：显式 source/target 仅在单引擎模式（`--engine llm|youdao|bing`）下
+/// 注意：显式 source/target 仅在单引擎模式（`--engine llm|google|youdao|bing`）下
 /// 实际生效——请求的 from/to 由此构造；`--engine auto` 时 pipeline 内部
 /// 自行检测方向，显式值只体现在 Meta 事件中（Result 事件携带 pipeline
 /// 实际使用的方向）。
@@ -247,8 +247,10 @@ pub(crate) fn parse_lang(s: &str) -> anyhow::Result<Lang> {
 
 fn validate_engine(engine: &str) -> anyhow::Result<()> {
     match engine {
-        "auto" | "llm" | "youdao" | "bing" => Ok(()),
-        other => anyhow::bail!("unknown engine {other:?}, expected one of auto/llm/youdao/bing"),
+        "auto" | "llm" | "google" | "youdao" | "bing" => Ok(()),
+        other => {
+            anyhow::bail!("unknown engine {other:?}, expected one of auto/llm/google/youdao/bing")
+        }
     }
 }
 
@@ -331,10 +333,10 @@ mod tests {
 
     #[test]
     fn validate_engine_accepts_known_rejects_other() {
-        for ok in ["auto", "llm", "youdao", "bing"] {
+        for ok in ["auto", "llm", "google", "youdao", "bing"] {
             validate_engine(ok).unwrap();
         }
-        assert!(validate_engine("google").is_err());
+        assert!(validate_engine("deepl").is_err());
     }
 
     #[test]
