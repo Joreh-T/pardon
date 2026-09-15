@@ -6,6 +6,7 @@ import {
   defaultProviderValue,
   formToUpsert,
   toRows,
+  validateEngineProviderPair,
   validateForm,
 } from './providers';
 
@@ -61,5 +62,23 @@ describe('default_provider 下拉语义', () => {
     expect(DEFAULT_PROVIDER_FIELD.key).toBe('default_provider');
     expect(DEFAULT_PROVIDER_FIELD.table).toBe('llm');
     expect(DEFAULT_PROVIDER_FIELD.restart).toBe(true);
+  });
+});
+
+describe('validateEngineProviderPair（写后生效对，core load 期校验的前置拦截）', () => {
+  it('engine=llm + provider 命中现有行 → null', () => {
+    expect(validateEngineProviderPair('llm', 'glm', toRows(cfg))).toBeNull();
+    expect(validateEngineProviderPair('llm', 'ds', toRows(cfg))).toBeNull();
+  });
+
+  it('engine=llm + provider 空串/悬空/无 providers → 错误文案', () => {
+    expect(validateEngineProviderPair('llm', '', toRows(cfg))).toContain('provider');
+    expect(validateEngineProviderPair('llm', 'ghost', toRows(cfg))).toContain('provider');
+    expect(validateEngineProviderPair('llm', 'glm', [])).toContain('provider');
+  });
+
+  it('engine 非 llm → 不约束（provider 可为空）', () => {
+    expect(validateEngineProviderPair('youdao', '', toRows(cfg))).toBeNull();
+    expect(validateEngineProviderPair('bing', 'ghost', [])).toBeNull();
   });
 });

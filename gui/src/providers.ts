@@ -78,6 +78,20 @@ export function formToUpsert(f: ProviderForm): {
 /** 「不设置」哨兵：下拉里代表空串（core 语义：default_provider 留空 = 不启用 LLM）。 */
 export const NOT_SET = '(不设置)';
 
+/** 写后生效对的跨字段校验（core 在 load 期做、config_set 白名单查不到的
+ * 那半）：default_engine=llm 时 default_provider 必须解析到某个现有
+ * provider id（空串/悬空都算不合格）。写入前拦截，避免落盘一个
+ * pardond 下次启动拒绝加载的配置。返回错误文案或 null。 */
+export function validateEngineProviderPair(
+  engine: string,
+  provider: string,
+  rows: ProviderRow[],
+): string | null {
+  if (engine !== 'llm') return null;
+  if (rows.some((r) => r.id === provider)) return null;
+  return '默认引擎为 llm 时必须选择一个有效的 provider（先把 provider 加进来，或把默认引擎改为 youdao/bing）';
+}
+
 /** default_provider 的字段规格。**不进 FIELDS/decideWrites**：options 随
  * providers 动态生成，且「(不设置)→空串」的写语义与 decideWrites 的
  * core 默认值回落不兼容——由 settings.ts 单独读写（写入走
@@ -88,7 +102,7 @@ export const DEFAULT_PROVIDER_FIELD: FieldSpec = {
   label: '默认 LLM provider',
   kind: 'select',
   restart: true,
-  hint: '不设置 = 不启用 LLM 引擎',
+  hint: '留空则不指定（默认引擎为 llm 时必须选定一个）',
 };
 
 /** 下拉 options：「(不设置)」+ 各 provider id。当前值是悬空指向（如手改

@@ -10,6 +10,7 @@ import {
   defaultProviderValue,
   formToUpsert,
   toRows,
+  validateEngineProviderPair,
   validateForm,
 } from './providers';
 import type { ProviderForm, ProviderRow } from './providers';
@@ -105,19 +106,26 @@ function readForm(): ProviderForm {
   };
 }
 
-/** provider 写操作统一收尾：reload → 按需复用重启横幅 → 成功文案 → 重渲染。 */
+/** provider 写操作统一收尾：reload → 按需复用重启横幅 → 成功文案 → 重渲染。
+ * reload 失败时写命令已成功、文件已落盘——文案如实说「已写入配置」，
+ * 不让调用方的 catch 报「保存/删除失败」掩盖写入已持久化的事实。 */
 async function afterProviderWrite(): Promise<void> {
   const msg = document.getElementById('msg')!;
   const btnRestart = document.getElementById('btn-restart') as HTMLButtonElement;
-  const { restart_required } = await reload();
-  if (restart_required) {
-    msg.textContent = '已保存。引擎相关改动需重启 pardond 生效。';
-    msg.classList.remove('fail');
-    btnRestart.hidden = false;
-  } else {
-    msg.textContent = '已保存并即时生效。';
-    msg.classList.remove('fail');
-    btnRestart.hidden = true;
+  try {
+    const { restart_required } = await reload();
+    if (restart_required) {
+      msg.textContent = '已保存。引擎相关改动需重启 pardond 生效。';
+      msg.classList.remove('fail');
+      btnRestart.hidden = false;
+    } else {
+      msg.textContent = '已保存并即时生效。';
+      msg.classList.remove('fail');
+      btnRestart.hidden = true;
+    }
+  } catch (e) {
+    msg.textContent = `已写入配置，但 daemon 校验失败：${String(e)}（请检查后重试或恢复设置）`;
+    msg.classList.add('fail');
   }
   await load();
 }
@@ -194,6 +202,7 @@ async function load(): Promise<void> {
 async function save(): Promise<void> {
   const msg = document.getElementById('msg')!;
   const btnRestart = document.getElementById('btn-restart') as HTMLButtonElement;
+  let persisted = false; // config_set 是否已落盘（reload 失败时文案如实区分）
   try {
     const cfg = (await invoke('read_config')) as Record<string, unknown>;
     const values: FormValues = {};
@@ -212,8 +221,22 @@ async function save(): Promise<void> {
     if (dpSel !== dpNow) {
       writes.push({ table: DEFAULT_PROVIDER_FIELD.table, key: DEFAULT_PROVIDER_FIELD.key, value: dpSel });
     }
+    // 写后生效对前置拦截：core 在 default_engine=llm 时要求 default_provider
+    // 解析到现有 provider（load 期 ConfigError），config_set 的单键白名单
+    // 查不到这层——不拦就是两次点击落盘一个 pardond 下次启动拒绝加载的
+    // 配置（写入先成功、reload 才报错）。dpSel 即写后生效值（无写时
+    // dpNow === dpSel）。
+    const engineField = FIELDS.find((f) => f.key === 'default_engine')!;
+    const engine = String(writes.find((w) => w.key === 'default_engine')?.value ?? effectiveValue(engineField, cfg));
+    const pairErr = validateEngineProviderPair(engine, dpSel, toRows(cfg));
+    if (pairErr) {
+      msg.textContent = pairErr;
+      msg.classList.add('fail');
+      return; // 一次 config_set 都不发
+    }
     for (const w of writes) {
       await invoke('config_set', { table: w.table, key: w.key, value: w.value });
+      persisted = true;
     }
     const changed = [...FIELDS, DEFAULT_PROVIDER_FIELD].filter((f) => writes.some((w) => w.key === f.key));
     const { restart_required } = await reload();
@@ -227,7 +250,10 @@ async function save(): Promise<void> {
       btnRestart.hidden = true;
     }
   } catch (e) {
-    msg.textContent = `保存失败：${String(e)}`;
+    // 写循环已落盘后 reload/daemon 校验失败 ≠ 保存失败：文件里确实写入了
+    msg.textContent = persisted
+      ? `已写入配置，但 daemon 校验失败：${String(e)}（请检查后重试或恢复设置）`
+      : `保存失败：${String(e)}`;
     msg.classList.add('fail');
   }
 }
