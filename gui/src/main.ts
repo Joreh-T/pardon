@@ -12,6 +12,10 @@ const $input = () => document.querySelector<HTMLTextAreaElement>('#input')!;
 let historyEntries: HistoryEntry[] = [];
 // 词卡徽章开关：status 轮询缓存；status 不可达时保持上次值（启动默认关）。
 let showBadge = false;
+// daemon 自动拉起：每次「连接成功→失联」的下降沿自动尝试一次（GUI 从启动器/
+// 快捷键拉起时顺带把整个 pardon 栈带起来）；失败才落回手动按钮。成功后复位，
+// daemon 下次掉线再自动拉一次——不会在持续失联时循环重试。
+let autoStartArmed = true;
 
 async function refreshHistory(): Promise<void> {
   try {
@@ -43,9 +47,23 @@ async function refreshStatus(): Promise<void> {
   try {
     const s = await status();
     showBadge = s.show_word_badge === true;
+    autoStartArmed = true;
     $('#conn').textContent = `已连接 pardond ${s.version} · 引擎 ${s.default_engine}`;
     $('#btn-start-daemon').hidden = true;
   } catch {
+    showBadge = false;
+    if (autoStartArmed) {
+      autoStartArmed = false;
+      $('#conn').textContent = 'pardond 未运行，正在自动启动…';
+      try {
+        await invoke('pardon_daemon_start');
+      } catch (e) {
+        $('#conn').textContent = `自动启动失败：${String(e)}`;
+      }
+      // pardond 起来要加载词典（~1-2s），稍候再查；仍失联则下一轮显示手动按钮
+      setTimeout(() => void refreshStatus(), 1500);
+      return;
+    }
     $('#conn').textContent = '未连接 pardond';
     $('#btn-start-daemon').hidden = false;
   }
