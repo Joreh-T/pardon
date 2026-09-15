@@ -216,7 +216,7 @@ fn read_config() -> Result<serde_json::Value, String> {
 
 /// 可写键白名单：(键, 表)；`None` 为根表。守护 api_key 等敏感字段
 /// 不被 GUI 的覆写路径触碰——白名单外的键一律拒绝。
-const WRITABLE: [(&str, Option<&str>); 8] = [
+const WRITABLE: [(&str, Option<&str>); 9] = [
     ("auto_translate", Some("daemon")),
     ("popup", Some("daemon")),
     ("show_word_badge", Some("daemon")),
@@ -225,6 +225,7 @@ const WRITABLE: [(&str, Option<&str>); 8] = [
     ("max_text_bytes", Some("daemon")),
     ("dedup_window_ms", Some("daemon")),
     ("default_engine", None),
+    ("default_provider", Some("llm")),
 ];
 
 fn json_to_toml(v: serde_json::Value) -> Result<toml_edit::Value, String> {
@@ -280,6 +281,11 @@ fn set_config_value(
         }
     }
     target.insert(key, toml_edit::Item::Value(new_val));
+    write_config_doc(path, &doc)
+}
+
+/// 写回配置文档（父目录缺失则创建；所有原位写路径共用）。
+fn write_config_doc(path: &std::path::Path, doc: &toml_edit::DocumentMut) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -292,6 +298,211 @@ fn set_config_value(
 #[tauri::command]
 fn config_set(table: Option<String>, key: String, value: serde_json::Value) -> Result<(), String> {
     set_config_value(&gui_config_path(), table.as_deref(), &key, value)
+}
+
+/// provider 编辑输入（GUI 表单 → 命令）。api_key 写入式：
+/// Some(非空) = 覆盖；None / Some("") = 保留现值（清除走 provider_clear_key）。
+#[derive(Deserialize)]
+pub struct ProviderInput {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub provider_type: String,
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+}
+
+/// provider type 枚举（与 pardon_core::config::ProviderType 一致）。
+const PROVIDER_TYPES: [&str; 3] = ["openai", "anthropic", "ollama"];
+
+/// 读配置文档（读不到/空文件 → 空文档起步；解析失败报错）。
+fn load_config_doc(path: &std::path::Path) -> Result<toml_edit::DocumentMut, String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    text.parse().map_err(|e| format!("parse config: {e}"))
+}
+
+/// 取（缺失则建 implicit 表的）`[llm]` 表。
+fn llm_table_mut(doc: &mut toml_edit::DocumentMut) -> Result<&mut toml_edit::Table, String> {
+    doc.entry("llm")
+        .or_insert_with(|| {
+            let mut t = toml_edit::Table::new();
+            t.set_implicit(true);
+            toml_edit::Item::Table(t)
+        })
+        .as_table_mut()
+        .ok_or_else(|| "`llm` is not a table".to_string())
+}
+
+/// 取（缺失则建的）`llm.providers` 数组表；形状不对（`[llm.providers.x]`
+/// 表形/内联数组等，core 会拒绝的形状）→ Err。
+fn providers_aot_mut(llm: &mut toml_edit::Table) -> Result<&mut toml_edit::ArrayOfTables, String> {
+    llm.entry("providers")
+        .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
+        .as_array_of_tables_mut()
+        .ok_or_else(|| "`llm.providers` is not an array of tables".to_string())
+}
+
+/// 覆写表中一个字符串键；既有值项的 decor（行尾注释/空白）搬到新值上
+/// ——insert 是整项替换，直接插会丢行尾注释（与 set_config_value 同坑）。
+fn table_set_str(t: &mut toml_edit::Table, key: &str, s: &str) {
+    let mut new_val = toml_edit::Value::from(s);
+    if let Some(item) = t.get_mut(key) {
+        if let Some(old) = item.as_value_mut() {
+            std::mem::swap(old.decor_mut(), new_val.decor_mut());
+        }
+    }
+    t.insert(key, toml_edit::Item::Value(new_val));
+}
+
+/// 新增/编辑 provider（`index=None` 追加到末尾；`Some(i)` 原位编辑）。
+/// 校验与 core ProviderConfig 同规则：id 非空且不与其他条目重复、
+/// base_url/model 非空、type ∈ openai/anthropic/ollama。
+/// 编辑只覆写 id/type/base_url/model（api_key 按 Some(非空) 才写），其余键
+/// （api_key_env/system_prompt/…）原样保留；旧 id 是 default_provider 且被
+/// 改名时同步改写 default_provider。
+fn provider_upsert_at(
+    path: &std::path::Path,
+    index: Option<usize>,
+    p: &ProviderInput,
+) -> Result<(), String> {
+    if p.id.is_empty() {
+        return Err("provider id must be non-empty".to_string());
+    }
+    if p.base_url.is_empty() {
+        return Err("provider base_url must be non-empty".to_string());
+    }
+    if p.model.is_empty() {
+        return Err("provider model must be non-empty".to_string());
+    }
+    if !PROVIDER_TYPES.contains(&p.provider_type.as_str()) {
+        return Err(format!(
+            "unknown provider type {:?}, expected one of openai/anthropic/ollama",
+            p.provider_type
+        ));
+    }
+    let new_key = p.api_key.as_deref().filter(|s| !s.is_empty());
+    let mut doc = load_config_doc(path)?;
+    let llm = llm_table_mut(&mut doc)?;
+    // aot 可变借用存活期间读好的改名待办；借出后再回写 default_provider
+    let mut rename_default_from: Option<String> = None;
+    {
+        let aot = providers_aot_mut(llm)?;
+        let len = aot.len();
+        let editing = match index {
+            Some(i) => {
+                if i >= len {
+                    return Err(format!("provider index {i} out of range (len {len})"));
+                }
+                Some(i)
+            }
+            None => None,
+        };
+        // id 不与其他条目重复（编辑条目保留自身旧 id 不算重复）
+        for (i, t) in aot.iter().enumerate() {
+            if editing == Some(i) {
+                continue;
+            }
+            if t.get("id").and_then(|v| v.as_str()) == Some(p.id.as_str()) {
+                return Err(format!("duplicate provider id {:?}", p.id));
+            }
+        }
+        match editing {
+            Some(i) => {
+                let t = aot.get_mut(i).expect("bounds checked above");
+                let old_id = t.get("id").and_then(|v| v.as_str()).map(str::to_string);
+                table_set_str(t, "id", &p.id);
+                table_set_str(t, "type", &p.provider_type);
+                table_set_str(t, "base_url", &p.base_url);
+                table_set_str(t, "model", &p.model);
+                if let Some(k) = new_key {
+                    table_set_str(t, "api_key", k);
+                }
+                if old_id.as_deref().is_some_and(|old| old != p.id) {
+                    rename_default_from = old_id;
+                }
+            }
+            None => {
+                let mut t = toml_edit::Table::new();
+                table_set_str(&mut t, "id", &p.id);
+                table_set_str(&mut t, "type", &p.provider_type);
+                table_set_str(&mut t, "base_url", &p.base_url);
+                table_set_str(&mut t, "model", &p.model);
+                if let Some(k) = new_key {
+                    table_set_str(&mut t, "api_key", k);
+                }
+                aot.push(t);
+            }
+        }
+    }
+    if let Some(old) = rename_default_from {
+        if llm.get("default_provider").and_then(|v| v.as_str()) == Some(old.as_str()) {
+            table_set_str(llm, "default_provider", &p.id);
+        }
+    }
+    write_config_doc(path, &doc)
+}
+
+/// 删除第 index 个 provider；该条 id 是 `llm.default_provider` 时拒绝
+/// （提示先换默认，避免留下指向不存在 provider 的悬空默认）。
+fn provider_delete_at(path: &std::path::Path, index: usize) -> Result<(), String> {
+    let mut doc = load_config_doc(path)?;
+    let llm = llm_table_mut(&mut doc)?;
+    let default = llm
+        .get("default_provider")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let aot = providers_aot_mut(llm)?;
+    let len = aot.len();
+    if index >= len {
+        return Err(format!("provider index {index} out of range (len {len})"));
+    }
+    let victim = aot
+        .get(index)
+        .and_then(|t| t.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    if let Some(v) = victim.as_deref() {
+        if default.as_deref() == Some(v) {
+            return Err(format!(
+                "provider {v:?} is llm.default_provider; switch default_provider before deleting"
+            ));
+        }
+    }
+    aot.remove(index);
+    write_config_doc(path, &doc)
+}
+
+/// 清除第 index 个 provider 的 api_key 与 api_key_env 两个键
+/// （读取/显示侧永不回显；清除是机密的唯一移除路径）。
+fn provider_clear_key_at(path: &std::path::Path, index: usize) -> Result<(), String> {
+    let mut doc = load_config_doc(path)?;
+    let aot = providers_aot_mut(llm_table_mut(&mut doc)?)?;
+    let len = aot.len();
+    if index >= len {
+        return Err(format!("provider index {index} out of range (len {len})"));
+    }
+    let t = aot.get_mut(index).expect("bounds checked above");
+    t.remove("api_key");
+    t.remove("api_key_env");
+    write_config_doc(path, &doc)
+}
+
+/// 新增/编辑 provider（语义见 [`provider_upsert_at`]）。
+#[tauri::command]
+fn provider_upsert(index: Option<usize>, provider: ProviderInput) -> Result<(), String> {
+    provider_upsert_at(&gui_config_path(), index, &provider)
+}
+
+/// 删除第 index 个 provider（默认指向守卫见 [`provider_delete_at`]）。
+#[tauri::command]
+fn provider_delete(index: usize) -> Result<(), String> {
+    provider_delete_at(&gui_config_path(), index)
+}
+
+/// 清除第 index 个 provider 的 api_key 与 api_key_env。
+#[tauri::command]
+fn provider_clear_key(index: usize) -> Result<(), String> {
+    provider_clear_key_at(&gui_config_path(), index)
 }
 
 /// 重启 pardond：stop（忽略结果——可能本就没在跑）→ 稍候 → start
@@ -335,6 +546,9 @@ fn main() {
             open_settings,
             read_config,
             config_set,
+            provider_upsert,
+            provider_delete,
+            provider_clear_key,
             restart_daemon,
             hide_popup,
             popup_resize,
@@ -664,5 +878,213 @@ api_key_env = "PARDON_TABLE_KEY"
             std::path::PathBuf::from("/tmp/x-t10.toml")
         );
         std::env::remove_var("PARDON_CONFIG");
+    }
+
+    // ── provider 管理（toml_edit ArrayOfTables 原位编辑）─────────────
+
+    const BASE_TOML: &str = r#"default_engine = "llm"
+# 顶部注释
+[llm]
+default_provider = "glm"
+[[llm.providers]]
+id = "glm" # 行尾注释
+type = "openai"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-5.3-flash"
+api_key = "fake-existing"
+"#;
+
+    /// 测试 helper：重读文件数 `[[llm.providers]]` 条数。
+    fn provider_count(path: &std::path::Path) -> usize {
+        let doc: toml_edit::DocumentMut = std::fs::read_to_string(path).unwrap().parse().unwrap();
+        doc["llm"]["providers"]
+            .as_array_of_tables()
+            .expect("providers is array-of-tables")
+            .len()
+    }
+
+    #[test]
+    fn provider_upsert_adds_new_with_comments_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        std::fs::write(&p, BASE_TOML).unwrap();
+        provider_upsert_at(
+            &p,
+            None,
+            &ProviderInput {
+                id: "ds".into(),
+                provider_type: "openai".into(),
+                base_url: "https://api.deepseek.com/v1".into(),
+                model: "deepseek-chat".into(),
+                api_key: Some("fake-new".into()),
+            },
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("# 顶部注释"), "{text}");
+        assert!(text.contains("# 行尾注释"), "{text}");
+        assert!(text.contains(r#"id = "ds""#));
+        assert!(text.contains(r#"api_key = "fake-new""#));
+        assert_eq!(provider_count(&p), 2);
+    }
+
+    #[test]
+    fn provider_upsert_edit_keeps_key_when_absent() {
+        // api_key None → 既有 key 保留
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        std::fs::write(&p, BASE_TOML).unwrap();
+        provider_upsert_at(
+            &p,
+            Some(0),
+            &ProviderInput {
+                id: "glm".into(),
+                provider_type: "openai".into(),
+                base_url: "https://changed.example/v1".into(),
+                model: "glm-5.4".into(),
+                api_key: None,
+            },
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            text.contains("fake-existing"),
+            "None 不得清掉既有 key: {text}"
+        );
+        assert!(text.contains("changed.example"));
+        assert_eq!(provider_count(&p), 1);
+    }
+
+    #[test]
+    fn provider_upsert_rejects_bad_type_and_duplicate_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        std::fs::write(&p, BASE_TOML).unwrap();
+        // type 非 openai/anthropic/ollama → Err
+        let err = provider_upsert_at(
+            &p,
+            None,
+            &ProviderInput {
+                id: "ds".into(),
+                provider_type: "gemini".into(),
+                base_url: "https://api.example/v1".into(),
+                model: "m".into(),
+                api_key: None,
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("type"), "{err}");
+        // id 与现有重复（且非本条）→ Err
+        let err = provider_upsert_at(
+            &p,
+            None,
+            &ProviderInput {
+                id: "glm".into(),
+                provider_type: "openai".into(),
+                base_url: "https://api.example/v1".into(),
+                model: "m".into(),
+                api_key: None,
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("duplicate"), "{err}");
+        // 编辑条目保留自身旧 id 不算重复
+        provider_upsert_at(
+            &p,
+            Some(0),
+            &ProviderInput {
+                id: "glm".into(),
+                provider_type: "anthropic".into(),
+                base_url: "https://api.example/v1".into(),
+                model: "m".into(),
+                api_key: None,
+            },
+        )
+        .unwrap();
+        // 被拒的两笔没写进文件
+        assert_eq!(provider_count(&p), 1);
+        assert!(!std::fs::read_to_string(&p).unwrap().contains("gemini"));
+    }
+
+    #[test]
+    fn provider_upsert_renaming_default_updates_default_provider() {
+        // 把 index 0 的 id 从 glm 改为 glm2，且 default_provider == "glm"
+        // → default_provider 同步写为 "glm2"
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        std::fs::write(&p, BASE_TOML).unwrap();
+        provider_upsert_at(
+            &p,
+            Some(0),
+            &ProviderInput {
+                id: "glm2".into(),
+                provider_type: "openai".into(),
+                base_url: "https://open.bigmodel.cn/api/paas/v4".into(),
+                model: "glm-5.3-flash".into(),
+                api_key: None,
+            },
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains(r#"default_provider = "glm2""#), "{text}");
+        assert!(text.contains(r#"id = "glm2""#), "{text}");
+        assert!(text.contains("# 行尾注释"), "编辑不得丢行尾注释: {text}");
+    }
+
+    #[test]
+    fn provider_delete_refuses_when_default_points_at_it() {
+        // default_provider == "glm" 时删 index 0 → Err 含 "default_provider"
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        std::fs::write(&p, BASE_TOML).unwrap();
+        let err = provider_delete_at(&p, 0).unwrap_err();
+        assert!(err.contains("default_provider"), "{err}");
+        assert_eq!(provider_count(&p), 1, "被拒的删除不得动文件");
+    }
+
+    #[test]
+    fn provider_delete_removes_entry() {
+        // default_provider 改指别的后删除成功，count-1
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        let two = format!(
+            "{BASE_TOML}[[llm.providers]]\nid = \"ds\"\ntype = \"openai\"\nbase_url = \"https://api.deepseek.com/v1\"\nmodel = \"deepseek-chat\"\n"
+        );
+        std::fs::write(&p, two).unwrap();
+        set_config_value(&p, Some("llm"), "default_provider", "ds".into()).unwrap();
+        provider_delete_at(&p, 0).unwrap();
+        assert_eq!(provider_count(&p), 1);
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(!text.contains(r#"id = "glm""#), "{text}");
+        assert!(!text.contains("fake-existing"), "{text}");
+        assert!(text.contains(r#"id = "ds""#), "{text}");
+    }
+
+    #[test]
+    fn provider_clear_key_removes_both_key_fields() {
+        // 同时移除 api_key 与 api_key_env（构造一个带 api_key_env 的）
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        let with_env = BASE_TOML.replace(
+            "api_key = \"fake-existing\"",
+            "api_key = \"fake-existing\"\napi_key_env = \"PARDON_TEST_KEY\"",
+        );
+        std::fs::write(&p, with_env).unwrap();
+        provider_clear_key_at(&p, 0).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(!text.contains("fake-existing"), "{text}");
+        assert!(!text.contains("PARDON_TEST_KEY"), "{text}");
+        assert!(!text.contains("api_key"), "{text}");
+        assert_eq!(provider_count(&p), 1);
+    }
+
+    #[test]
+    fn config_set_accepts_default_provider_llm() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.toml");
+        std::fs::write(&p, BASE_TOML).unwrap();
+        set_config_value(&p, Some("llm"), "default_provider", "other".into()).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains(r#"default_provider = "other""#), "{text}");
     }
 }
