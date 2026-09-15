@@ -266,6 +266,22 @@ binds {
 托盘「打开主窗口/设置」在 GUI 未运行时同样会拉起
 （`pardon-gui --main` / `--settings`）。
 
+### 桌面图标（应用启动器）
+
+让 pardon 出现在应用启动器（noctalia/GNOME 等）并正确关联窗口图标：
+
+```bash
+# 图标（512px，与托盘同款）
+mkdir -p ~/.local/share/icons/hicolor/512x512/apps
+cp assets/pardon-512.png ~/.local/share/icons/hicolor/512x512/apps/pardon.png
+# 桌面项（Exec 换成绝对路径更稳，启动器不一定继承 ~/.cargo/bin）
+sed 's|^Exec=pardon-gui$|Exec='"$HOME"'/.cargo/bin/pardon-gui|' \
+    dist/desktop/pardon-gui.desktop > ~/.local/share/applications/pardon-gui.desktop
+```
+
+Wayland app_id 为 `pardon-gui`，与桌面文件名一致，启动器图标自动关联窗口。
+
+
 ### 弹窗模式（popup）
 
 `[daemon] popup = true`（默认 false，通知模式行为不变；也可在设置界面切换）。

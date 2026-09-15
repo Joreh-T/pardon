@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=pardon
+Comment=Pardon my French — 划词翻译 / 词卡 / 弹窗
+GenericName=Translator
+Exec=pardon-gui
+Icon=pardon
+Terminal=false
+Categories=Utility;Translation;TextTools;
+Keywords=translate;translation;dictionary;pardon;翻译;词典;
+StartupWMClass=pardon-gui
