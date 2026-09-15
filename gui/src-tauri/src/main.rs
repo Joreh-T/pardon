@@ -534,10 +534,7 @@ async fn restart_daemon() -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
+            let _ = show_main_window(app);
             if args.iter().any(|a| a == "--settings") {
                 if let Some(w) = app.get_webview_window("settings") {
                     let _ = w.show();
@@ -623,21 +620,9 @@ fn main() {
                             let _ = create_settings_window(&win_handle);
                         }
                     }
-                    // "main" 及兜底：重建镜像 tauri.conf.json 的 main 定义
+                    // "main" 及兜底：show+focus，窗口被关闭则重建（同单实例）
                     _ => {
-                        if let Some(w) = win_handle.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        } else {
-                            let _ = tauri::WebviewWindowBuilder::new(
-                                &win_handle,
-                                "main",
-                                tauri::WebviewUrl::App("index.html".into()),
-                            )
-                            .title("pardon")
-                            .inner_size(760.0, 520.0)
-                            .build();
-                        }
+                        let _ = show_main_window(&win_handle);
                     }
                 }
             });
@@ -663,6 +648,28 @@ fn main() {
 }
 
 /// 创建设置窗口（单实例回调 / --settings / 主窗口按钮共用）。
+/// 显示主窗口（单实例回调与 show_window 事件共用）：已存在则 show+focus，
+/// 被关闭（已销毁）则按 tauri.conf.json 的定义重建。主窗口关闭后进程仍由
+/// 隐藏的 popup 窗口保活——再次启动会被单实例插件吞掉，所以这里必须能重建，
+/// 否则「退出主窗口后快捷键拉不起 GUI」。
+pub fn show_main_window(handle: &tauri::AppHandle) -> tauri::Result<()> {
+    if let Some(w) = handle.get_webview_window("main") {
+        w.show()?;
+        w.set_focus()?;
+        Ok(())
+    } else {
+        tauri::WebviewWindowBuilder::new(
+            handle,
+            "main",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("pardon")
+        .inner_size(760.0, 520.0)
+        .build()
+        .map(|_| ())
+    }
+}
+
 pub fn create_settings_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     tauri::WebviewWindowBuilder::new(
         app,
