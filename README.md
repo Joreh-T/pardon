@@ -245,13 +245,25 @@ cd src-tauri && cargo install --path . --bin pardon-gui   # 或 cargo run 直接
 运行 `pardon-gui`（加 `--settings` 启动即开设置窗口）。需 pardond 在跑；
 主窗口检测到未连接时会提示并给出「一键启动」按钮。
 
-### 开机自启（niri）
+### 开机自启与唤起（niri）
+
+推荐分工：daemon 自启常驻，GUI 不自启、用快捷键唤起。
 
 ```kdl
-spawn-at-startup "pardon-gui"
+spawn-sh-at-startup "pardon daemon start"   // 也可用 M2 的 systemd user service
 ```
 
-不配自启也可用：托盘「打开主窗口/设置」在 GUI 未运行时会拉起
+```kdl
+binds {
+    Mod+G { spawn "pardon-gui"; }
+}
+```
+
+`pardon-gui` 是单实例：已在运行时再触发不会开第二份，而是聚焦主窗口
+（带 `--settings` 参数则聚焦/打开设置窗口）。注意弹窗输出模式
+（`[daemon] popup = true`）需要 GUI 进程在场接收事件——不在时自动回退
+桌面通知（见[弹窗模式](#弹窗模式popup)），用弹窗就保持一份 GUI 在跑。
+托盘「打开主窗口/设置」在 GUI 未运行时同样会拉起
 （`pardon-gui --main` / `--settings`）。
 
 ### 弹窗模式（popup）
@@ -320,12 +332,29 @@ pardon history --clear
 
 `pardon-gui --settings`（或主窗口按钮/托盘菜单进入）。可修改 7 个
 `[daemon]` 字段（auto_translate / popup / show_word_badge /
-copy_translation / notify_timeout_ms / max_text_bytes / dedup_window_ms）
-与 `default_engine`。保存即写回 config.toml（toml_edit 原位写，文件里的
-注释原样保留）并触发 daemon reload——`[daemon]` 字段热生效；引擎字段改动
-提示「重启生效」并提供一键重启按钮。LLM providers 只读展示（id/类型/
-model/key 是否已配置）；**api_key / api_key_env 绝不经 GUI 显示或写入**
-（写白名单硬编码，不含任何 key 字段）。
+copy_translation / notify_timeout_ms / max_text_bytes / dedup_window_ms）、
+`default_engine` 与「默认 LLM provider」下拉。保存即写回 config.toml
+（toml_edit 原位写，文件里的注释原样保留）并触发 daemon reload——
+`[daemon]` 字段热生效；引擎相关项（default_engine / default_provider /
+provider 条目）改动后出现「重启 pardond」横幅按钮，一键重启。
+
+**LLM provider 管理**：providers 列表直接增/删/改（id / type /
+base_url / model）。守卫：删除正被 `llm.default_provider` 指向的
+provider 会被拒绝（先切走默认再删）；`default_engine = "llm"` 时必须
+选定一个有效 provider，悬空指向在保存前拦截；编辑改 id 时若旧 id 是
+默认指向，`default_provider` 同步改写。
+
+**api_key 政策（写入式）**：GUI 永不回显已存 key——读取侧脱敏，每个
+provider 只带 `has_api_key` 存在性标志；表单里的 key 框是密码框，留空＝
+保留现值，输入新值才覆盖（明文写入 config.toml 的 `api_key`，风险同
+[配置](#配置)节所述）；「清除已存 key」是编辑表单里的独立按钮。
+`api_key_env` 不经 GUI（读侧同样脱敏，配置里已有的原样保留）。key 只
+存于 config.toml。
+
+**主题**：「界面主题」下拉——跟随系统（prefers-color-scheme）/
+Catppuccin 摩卡 / Catppuccin 拿铁 / macOS 浅色 / Nord。选择即时生效并
+跨窗口（主窗口/弹窗/设置）同步。主题偏好存 GUI 本地（webview
+localStorage），不写 config.toml。
 
 ### 验收冒烟（手动清单）
 
@@ -342,6 +371,10 @@ model/key 是否已配置）；**api_key / api_key_env 绝不经 GUI 显示或�
    后条目出现。
 7. `~/.config/pardon/config.toml` 的注释在 GUI 改动后完好。
 8. GUI 在运行时，点托盘『打开主窗口』/『设置』应聚焦/打开对应窗口。
+9. 设置页 provider 管理：新增/编辑/删除 provider、切「默认 LLM
+   provider」——引擎相关项改完后「重启 pardond」横幅出现并可一键重启；
+   删除默认指向的 provider 被拒绝。
+10. 设置页切「界面主题」→ 主窗口/弹窗/设置三窗口即时生效（跨窗口同步）。
 
 ## License
 
