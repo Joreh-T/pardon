@@ -406,6 +406,18 @@ button:hover {
   padding: 10px 12px;
 }
 
+.providers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.providers-head button {
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
 .provider {
   padding: 4px 0;
   border-bottom: 1px dashed var(--border);
@@ -435,6 +447,50 @@ button:hover {
   flex: none;
   font-size: 11px;
   color: var(--fg-dim);
+}
+
+/* 行内「编辑/删除」：跟在 key 徽标后右侧成组 */
+.provider-ops {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.provider-ops button {
+  font-size: 11px;
+  padding: 1px 8px;
+}
+
+/* provider 编辑表单（常驻容器、默认隐藏；内容由 settings.ts 按需生成） */
+#provider-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+/* display:flex 会盖掉 UA 的 [hidden]，需显式收回 */
+#provider-form[hidden] {
+  display: none;
+}
+
+.field input[type='text'],
+.field input[type='password'] {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.pf-actions {
+  margin-top: 4px;
 }
 
 .provider-url {

@@ -3,7 +3,10 @@
 
 export interface FieldSpec {
   key: string;
-  table: 'daemon' | null;
+  // 可写表（与 Rust WRITABLE 白名单的表一一对应）；null 为根表。
+  // FIELDS 全在 daemon/根表；'llm' 仅供 providers.ts 的 default_provider
+  // 字段（动态 options，不进 FIELDS/decideWrites——见 providers.ts）。
+  table: 'daemon' | 'llm' | null;
   label: string;
   kind: 'bool' | 'number' | 'select';
   options?: string[]; // kind === 'select'
