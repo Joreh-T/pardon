@@ -2,3 +2,8 @@
 *.sqlite
 *.db
 node_modules/
+
+
+docs/superpowers/
+docs/m2-wayland-spike.md
+docs/m3-tauri-spike.md
