@@ -16,8 +16,7 @@ Pardon my French —— 一个为 Linux/Wayland 桌面与终端打造的中英�
   提示词；免费 Google 端点作兜底，多引擎自动降级
 - **划词即译**：`Mod+Y` 翻译鼠标选区、`Mod+Shift+Y` 翻译剪贴板，结果以
   GUI 弹窗或桌面通知展示（词卡风格分层）
-- **Tauri 2 GUI**：主窗口（查词/翻译/历史）、5 套主题（含跟随系统与
-  macOS 浅色）、系统托盘、设置界面（LLM provider 增删改、api_key 写入式
+- **Tauri 2 GUI**：主窗口（查词/翻译/历史）、5 套主题（含跟随系统）、系统托盘、设置界面（LLM provider 增删改、api_key 写入式
   不回显、配置热生效）
 - **翻译历史**：本地 SQLite，上限 1000 条，`pardon history` 随查
 - **nvim 深度集成**：`:Pardon` 光标词浮窗词卡、`:PardonTranslate` 选区
@@ -446,8 +445,7 @@ cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
   的数据**不在本仓库内**，由用户自行下载导入（见
   [dicts/README.md](dicts/README.md)）；两份词典的许可归其上游项目所有
   （CC-CEDICT 为 CC BY-SA 4.0）。
-- 灵感与参考：pot-desktop、EasyDict、CopyTranslator、translate.nvim 等
-  前辈项目。
+- 灵感与参考：pot-desktop、EasyDict、CopyTranslator、translate.nvim 等项目。
 
 ## License
 
