@@ -228,8 +228,9 @@ user_prompt_template = "把这句{source}翻成{target}：{text}"
 
 ## nvim 集成
 
-nvim 插件独立发布于 [Joreh-T/pardon.nvim](https://github.com/Joreh-T/pardon.nvim)
-（源码同源于本仓库 `nvim/` 目录）：`:Pardon` 查光标下的词、
+nvim 插件独立发布于 [Joreh-T/pardon.nvim](https://github.com/Joreh-T/pardon.nvim)，
+并以 git submodule 挂载在本仓库 `nvim/` 路径（代码实体只在插件仓库——克隆
+主仓库时加 `--recurse-submodules` 可一并取得）：`:Pardon` 查光标下的词、
 `:PardonTranslate` 翻译选区或光标词，词卡与译文在浮动窗口展示（翻译支
 持流式渲染），`<Plug>` 键位由用户自行映射。安装与配置说明见
 [nvim/README.md](nvim/README.md)。
@@ -437,6 +438,16 @@ cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 
 注意：GUI 构建顺序是「先 `npm run build` 产出 `dist/` 再 cargo」——tauri
 在编译期嵌入前端产物，`dist/` 缺失会 panic。
+
+### 插件开发（nvim/，submodule）
+
+插件源码实体在 [Joreh-T/pardon.nvim](https://github.com/Joreh-T/pardon.nvim)，
+本仓库以 submodule 引用。改动插件的流程（两步都不能少，漏第二步会产生断指针）：
+
+```bash
+cd nvim && git add -A && git commit -m "…" && git push   # ① 子模块仓库提交并推送
+cd .. && git add nvim && git commit -m "chore: bump pardon.nvim" && git push  # ② 主仓库记指针并推送
+```
 
 ## 数据与致谢
 
