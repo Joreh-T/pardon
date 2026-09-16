@@ -99,6 +99,9 @@ PARDON_HOME=/tmp/pardon-smoke-home cargo run -p pardon-cli -- lookup 你好 --js
 
 ## 备注
 
+- **数据许可**：ECDICT 与 CC-CEDICT 的数据**不在 pardon 仓库内分发**，
+  许可归上游项目所有（CC-CEDICT 为 CC BY-SA 4.0；ECDICT 见其仓库声明）。
+  本仓库只提供导入器，导入后的 sqlite 文件仅限本地使用，请勿再分发。
 - **导入耗时**：全量 ECDICT（约 340 万行）目前是逐行 INSERT（尚未做事务
   批量优化），release 构建下也需要几分钟，属正常现象；CEDICT（约 12 万
   行）只要几秒。导入全程无网络请求，可放心离线进行。

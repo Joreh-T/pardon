@@ -1,41 +1,109 @@
 # pardon
 
-Pardon my French — offline dictionary + LLM translation CLI, Chinese↔English,
-built for nvim and terminals.
+> **English** — pardon is a Chinese↔English translation tool for Linux/Wayland:
+> an offline dictionary (3.4M entries) for instant word cards, LLM-powered
+> sentence translation with a free Google fallback, hotkey text-selection
+> popups, a Tauri GUI with themes, and deep nvim integration. Daemon + thin
+> clients: the CLI keeps working even when the daemon is down.
 
-> M1 状态：CLI（lookup / translate / speak / config）+ 本地词典 + 引擎链
-> （LLM → Google → 有道 → 必应，自动降级）已可用；nvim 插件在本仓库
-> `nvim/` 目录（见下文 [nvim 集成](#nvim-集成)）。文档与打包仍在完善中。
+Pardon my French —— 一个为 Linux/Wayland 桌面与终端打造的中英互译工具。
+
+**特性一览**
+
+- **离线词卡**：ECDICT 340 万词条 + CC-CEDICT，划词即出音标、词性释义、
+  词形变化、柯林斯星级——微秒级、不联网
+- **LLM 句子翻译**：任意 OpenAI 兼容端点 / Anthropic / Ollama，可自定义
+  提示词；免费 Google 端点作兜底，多引擎自动降级
+- **划词即译**：`Mod+Y` 翻译鼠标选区、`Mod+Shift+Y` 翻译剪贴板，结果以
+  GUI 弹窗或桌面通知展示（词卡风格分层）
+- **Tauri 2 GUI**：主窗口（查词/翻译/历史）、5 套主题（含跟随系统与
+  macOS 浅色）、系统托盘、设置界面（LLM provider 增删改、api_key 写入式
+  不回显、配置热生效）
+- **翻译历史**：本地 SQLite，上限 1000 条，`pardon history` 随查
+- **nvim 深度集成**：`:Pardon` 光标词浮窗词卡、`:PardonTranslate` 选区
+  流式翻译（float / 原地替换 / 插入 / 写寄存器），SSH 远程可用
+- **发音**：在线音频缓存 + espeak-ng 离线兜底
+
+**平台要求**：Linux + Wayland（X11/Windows 见 [Roadmap](#roadmap)）；
+Rust stable（建议 ≥ 1.78）构建；构建 GUI 另需 Node ≥ 18 + npm。
+
+## 架构
+
+Daemon + 瘦客户端：常驻的 `pardond` 承担「必须在场」的能力（剪贴板监听、
+IPC、托盘、事件推送），`pardon` CLI 内嵌同一核心直查词典（daemon 不在也
+完全可用），GUI 是纯 IPC 客户端（可替换）。
+
+```mermaid
+flowchart TB
+    subgraph clients["客户端（可替换入口）"]
+        CLI["pardon CLI\n毫秒级·内嵌核心"]
+        NVIM["pardon.nvim\n调 CLI"]
+        GUI["pardon-gui (Tauri 2)\n纯 IPC 客户端"]
+    end
+    subgraph daemon["pardond（常驻 daemon）"]
+        CLIP["剪贴板监听桥"] --> H["处理链：防回环→分流→输出分发"]
+        UDS["UDS IPC"] --> H
+        HTTP["HTTP 触发口"] --> H
+        TRAY["托盘"]
+    end
+    CORE["pardon-core（静态内嵌于 CLI 与 daemon）\n分流器 · 词典 · 引擎链 · TTS · 配置 · 历史"]
+    DICT[("词典 SQLite")]
+    LLM["LLM API / Google"]
+
+    CLI -.静态内嵌.-> CORE
+    H --> CORE
+    CORE --> DICT
+    CORE --> LLM
+    GUI <--> UDS
+```
+
+可编辑的详细图纸（excalidraw，可在 [excalidraw.com](https://excalidraw.com)
+打开）：[系统架构图](docs/architecture.excalidraw) ·
+[翻译执行流程图](docs/flow.excalidraw)。
 
 ## 安装
 
+系统依赖（Debian/Ubuntu；其他发行版装等价包）：
+
 ```bash
-cargo install --path crates/cli
+# 运行依赖：wl-clipboard（剪贴板）、桌面通知服务（mako/dunst/noctalia 任一）
+# 构建依赖：pkg-config、ALSA 头（TTS 播放 rodio）、构建 GUI 还需 webkit2gtk
+sudo apt install wl-clipboard pkg-config libasound2-dev \
+     libwebkit2gtk-4.1-dev build-essential libxdo-dev librsvg2-dev libssl-dev
 ```
+
+三件套（可只装 CLI，其余按需）：
+
+```bash
+git clone https://github.com/Joreh-T/pardon && cd pardon
+
+cargo install --path crates/cli --bin pardon       # CLI（查词/翻译/发音/触发）
+cargo install --path crates/daemon --bin pardond   # 常驻 daemon（划词/通知/托盘）
+# GUI：先构建前端再装（顺序不能反——tauri 编译期嵌入前端产物）
+cd gui && npm install && npm run build && cd src-tauri \
+  && cargo install --path . --bin pardon-gui && cd ../..
+```
+
+词典数据不入仓库（体积与许可原因），导入一次即可，见
+**[dicts/README.md](dicts/README.md)**——里面还有几秒走通全链路的 mini
+fixture 冒烟一节。
 
 ## 快速上手
 
-### 1. 准备词典（离线查词）
-
-查词依赖本地 SQLite 词典（ECDICT 英→中 + CC-CEDICT 中→英），下载与导入
-步骤见 **[dicts/README.md](dicts/README.md)**。想先跑通流程可用其中的
-mini fixture 冒烟一节，几秒即可。词典缺失时 `pardon` 不会报错，只是查词
-降级为空结果并提示导入命令。
-
-### 2. 查词
+### 1. 查词（离线）
 
 ```bash
 $ pardon lookup run --json
 {"found":true,"word":"run","phonetic":{"uk":"rʌn"},"pos":[{"pos":"n.","gloss":["跑步"]},{"pos":"v.","gloss":["跑","运转"]}],"definition":["move fast","operate"],"exchange":{"past":"ran","pp":"run","ing":"running","third":"runs","lemma":"run"},"collins":3,"oxford":true,"tags":["zk","gk","cet4"],"source":"ecdict"}
 
 $ pardon lookup 你好 --json
-{"found":true,"word":"你好","phonetic":{"uk":"nǐ hǎo"},"pos":[{"pos":"","gloss":["you (informal)","hello"]}],"oxford":false,"source":"cedict"}
+{"found":true,"word":"你好","phonetic":{"uk":"nǐ hao"},"pos":[{"pos":"","gloss":["you (informal)","hello"]}],"oxford":false,"source":"cedict"}
 ```
 
 中文词走 CEDICT（带拼音，数字声调自动转声调符号），英文词走 ECDICT
 （音标、词性分组释义、词形变化、Collins/Oxford 标签）。
 
-### 3. 翻译
+### 2. 翻译（引擎链）
 
 单词自动走离线词典路由（不联网）；句子走引擎链（LLM → Google → 有道
 → 必应，自动降级）。Google 走非官方免费端点（Chrome 词典扩展同款，
@@ -62,7 +130,7 @@ $ echo "The quick brown fox jumps over the lazy dog." | pardon translate --stdin
   `{"type":"error","code":"timeout",…}` 并以退出码 124 结束）。
 - 翻译一个单词（如 `pardon translate run`）优先离线词典卡片。
 
-### 4. 朗读
+### 3. 朗读
 
 ```bash
 pardon speak "hello world"        # --lang auto|en|zh
@@ -128,7 +196,10 @@ model = "qwen2.5:7b"
 - `default_engine = "google"` 时不需要任何配置（默认兜底链第一位即
   Google），但走非官方免费端点，可能失效或限流。
 - `default_engine = "youdao" | "bing"` 时不需要任何配置，但其免费端点
-  已于 2026-09 失效（见上文[翻译](#3-翻译)节），句子翻译建议配置 LLM。
+  已于 2026-09 失效，句子翻译建议配置 LLM。
+
+以上 provider 与引擎项也可以全部在 GUI 设置界面里管理（见
+[设置窗口](#设置窗口)），无需手改文件。
 
 ### 自定义提示词
 
@@ -153,41 +224,52 @@ user_prompt_template = "把这句{source}翻成{target}：{text}"
 | --- | --- |
 | `PARDON_HOME` | 数据根目录（词典 `<home>/dict`、TTS 缓存 `<home>/tts`）；缺省 `~/.local/share/pardon` |
 | `PARDON_CONFIG` | 配置文件路径覆盖；缺省 `~/.config/pardon/config.toml` |
+| `PARDON_HTTP_BIND` | HTTP 触发口绑定地址覆盖（仅回环） |
+| `PARDON_IPC_SOCK` | UDS 套接字路径覆盖（调试用） |
 
 ## nvim 集成
 
-nvim 插件随本仓库发布（`nvim/` 目录）：`:Pardon` 查光标下的词、
+nvim 插件独立发布于 [Joreh-T/pardon.nvim](https://github.com/Joreh-T/pardon.nvim)
+（源码同源于本仓库 `nvim/` 目录）：`:Pardon` 查光标下的词、
 `:PardonTranslate` 翻译选区或光标词，词卡与译文在浮动窗口展示（翻译支
 持流式渲染），`<Plug>` 键位由用户自行映射。安装与配置说明见
 [nvim/README.md](nvim/README.md)。
 
-## M2 — 复制即翻译（pardond）
+## 后台常驻与划词翻译（pardond）
 
-常驻 daemon 监听剪贴板，复制即翻译并弹桌面通知；niri/WM 快捷键经
-`pardon trigger` 唤起。`pardon lookup/translate/speak` 不依赖 daemon（内嵌直查）。
+常驻 daemon 监听剪贴板（可选「复制即翻译」），快捷键经 `pardon trigger`
+唤起翻译并弹 GUI 弹窗或桌面通知。`pardon lookup/translate/speak` 不依赖
+daemon（内嵌直查）。
 
 ### 运行（推荐：systemd user service）
 
-    cargo install --path crates/daemon --bin pardond   # 或与 pardon 一起安装
     mkdir -p ~/.config/systemd/user
     cp dist/systemd/pardon.service ~/.config/systemd/user/
     systemctl --user daemon-reload && systemctl --user enable --now pardon
 
-无 systemd 场景：`pardon daemon start`（日志 `~/.local/share/pardon/log/pardond.log`）/ `pardon daemon stop`。
+无 systemd / 桌面自启场景：`pardon daemon start`（日志
+`~/.local/share/pardon/log/pardond.log`）/ `pardon daemon stop`。
+niri 用户也可以 `spawn-sh-at-startup "pardon daemon start"`。
 
-依赖：`wl-clipboard`（wl-paste/wl-copy，剪贴板监听与读写）；通知服务（mako/dunst）。
-缺失时 daemon 自动降级为纯 HTTP 触发口模式（`pardon status` 可见）。
+依赖：`wl-clipboard`（wl-paste/wl-copy，剪贴板监听与读写）；通知服务
+（mako/dunst 等）。缺失时 daemon 自动降级为纯 HTTP 触发口模式
+（`pardon status` 可见）。
 
-### niri 快捷键
+### 快捷键（niri 示例，键位自定）
 
 ```kdl
 binds {
-    Mod+T { spawn "pardon" "trigger" "selection"; }
-    Mod+Shift+T { spawn "pardon" "trigger" "clipboard"; }
+    Mod+Y { spawn "pardon" "trigger" "selection"; }     // 翻译鼠标选区（PRIMARY）
+    Mod+Shift+Y { spawn "pardon" "trigger" "clipboard"; } // 翻译剪贴板
+    Mod+G { spawn "pardon-gui"; }                       // 唤起/聚焦 GUI（单实例）
 }
 ```
 
 （GNOME 等桌面：系统设置 → 自定义快捷键 → 命令 `pardon trigger selection`。）
+
+> 小贴士：终端里的 vim/nvim 等 TUI 应用不会把 yank 写进 PRIMARY 选区——
+> 在这些应用里用「剪贴板」触发更符合直觉，或参考 nvim/README.md 的
+> TextYankPost 方案。
 
 ### HTTP 触发口（localhost only）
 
@@ -199,7 +281,8 @@ JSON 说明：响应中的可选项在缺省时直接省略键（如 trigger 响
 没有 `translation` 键），而非输出显式 `null`——消费方应把缺失键当作 `null`。
 
 安全说明：只绑定回环地址、无鉴权——本地任意进程都可触发/关停（用户级信任域，
-与剪贴板本身同权限级）。改端口见下方配置。
+与剪贴板本身同权限级）。UDS 套接字同理，靠文件权限（0600）限定本用户。
+改端口见下方配置。
 
 ### [daemon] 配置（~/.config/pardon/config.toml，均可省略）
 
@@ -211,69 +294,25 @@ JSON 说明：响应中的可选项在缺省时直接省略键（如 trigger 响
 | dedup_window_ms | 10000 | 同内容去重时间窗（防回环） |
 | copy_translation | false | 译文自动写回剪贴板（写回前登记防回环，不会 ping-pong）；翻译进行期间的其他复制会被译文覆盖（防回环只防循环，不防丢失） |
 | notify_timeout_ms | 5000 | 通知显示时长 |
-| show_word_badge | false | 词卡通知显示学习徽章行（柯林斯星级 · 牛津核心 · 考试标签） |
-| popup | false | 翻译结果优先 GUI 弹窗展示（无 GUI 订阅时回退桌面通知，见 [M3](#m3--gui-pardon-gui)） |
+| show_word_badge | false | 词卡显示学习徽章行（柯林斯星级 · 牛津核心 · 考试标签） |
+| popup | false | 翻译结果优先 GUI 弹窗展示（无 GUI 订阅时回退桌面通知，见[弹窗模式](#弹窗模式popup)） |
 
-### 手动测试矩阵（Niri + mako/dunst）
+## 图形界面（pardon-gui）
 
-1. 启动后复制一个英文单词（如 `run`）→ 通知显示词卡（词性+释义）
-2. 复制整句 → 通知显示 LLM 译文（需配置 LLM provider，见上文引擎章节）
-3. 立即再复制同样内容 → 无第二条通知（去重）
-4. 开 `copy_translation = true` 后复制整句 → 剪贴板内容变为译文，可直接粘贴；
-   且不会触发反向翻译（防回环）
-5. `Mod+T` 选中一段文字按快捷键 → 通知弹出
-6. 复制一张图片 → 无事件（非文本过滤）；随后复制文本 → 正常
-7. `systemctl --user restart niri`（合成器重启）→ daemon 自动恢复监听（断线重连）
-8. `pardon status` / `pardon daemon stop`
-
-## M3 — GUI（pardon-gui）
-
-Tauri 2 GUI（`gui/` 目录，独立 cargo 项目）：快捷键弹窗、主窗口（查词/翻译/
-历史）、系统托盘、设置界面。GUI 是纯 IPC 客户端——所有翻译/词典/历史数据
-经下方 UDS 协议向 pardond 请求，自身不内嵌翻译逻辑（可替换客户端）。
+Tauri 2 GUI（`gui/` 目录，独立 cargo 项目）：快捷键弹窗、主窗口（查词/
+翻译/历史）、系统托盘、设置界面。GUI 是纯 IPC 客户端——所有翻译/词典/
+历史数据经下方 UDS 协议向 pardond 请求，自身不内嵌翻译逻辑（可替换
+客户端）。GUI 未检测到 daemon 时会自动拉起；主窗口关闭后进程由隐藏的
+弹窗窗口保活，再按快捷键即重新唤出主窗口。
 
 ### 构建与运行
 
-前置系统依赖（Debian/Ubuntu；其余发行版装对应 webkit2gtk-4.1 等价包）：
-
-```bash
-sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev librsvg2-dev libssl-dev
-```
-
-构建安装：
-
-```bash
-cd gui && npm install && npm run build
-cd src-tauri && cargo install --path . --bin pardon-gui   # 或 cargo run 直接调试
-```
-
-运行 `pardon-gui`（加 `--settings` 启动即开设置窗口）。需 pardond 在跑；
-主窗口检测到未连接时会提示并给出「一键启动」按钮。
-
-### 开机自启与唤起（niri）
-
-推荐分工：daemon 自启常驻，GUI 不自启、用快捷键唤起。
-
-```kdl
-spawn-sh-at-startup "pardon daemon start"   // 也可用 M2 的 systemd user service
-```
-
-```kdl
-binds {
-    Mod+G { spawn "pardon-gui"; }
-}
-```
-
-`pardon-gui` 是单实例：已在运行时再触发不会开第二份，而是聚焦主窗口
-（带 `--settings` 参数则聚焦/打开设置窗口）。注意弹窗输出模式
-（`[daemon] popup = true`）需要 GUI 进程在场接收事件——不在时自动回退
-桌面通知（见[弹窗模式](#弹窗模式popup)），用弹窗就保持一份 GUI 在跑。
-托盘「打开主窗口/设置」在 GUI 未运行时同样会拉起
-（`pardon-gui --main` / `--settings`）。
+见 [安装](#安装) 一节的 GUI 部分（先 `npm run build` 再 cargo）。
+运行 `pardon-gui`（加 `--settings` 启动即开设置窗口）。
 
 ### 桌面图标（应用启动器）
 
-让 pardon 出现在应用启动器（noctalia/GNOME 等）并正确关联窗口图标：
+让 pardon 出现在应用启动器（GNOME/noctalia 等）并正确关联窗口图标：
 
 ```bash
 # 图标（512px，与托盘同款）
@@ -286,14 +325,14 @@ sed 's|^Exec=pardon-gui$|Exec='"$HOME"'/.cargo/bin/pardon-gui|' \
 
 Wayland app_id 为 `pardon-gui`，与桌面文件名一致，启动器图标自动关联窗口。
 
-
 ### 弹窗模式（popup）
 
 `[daemon] popup = true`（默认 false，通知模式行为不变；也可在设置界面切换）。
 开启后翻译结果改用 GUI 弹窗展示：词卡带音标/词形，内容高度自适应
 （宽固定 420），Esc 或失焦隐藏；隐藏时的位置记忆在
 `~/.local/share/pardon/gui-state.json`，下次在原位弹出。无 GUI 订阅时自动
-回退桌面通知，GUI 退出/断开即恢复通知——两条通路永不低于 M2 的可用性。
+回退桌面通知，GUI 退出/断开即恢复通知——两条通路永不低于纯通知模式的
+可用性。
 
 ### 翻译历史
 
@@ -308,6 +347,44 @@ pardon history --clear
 1000 条、超出自动裁剪最旧。CLI translate、daemon 剪贴板/触发翻译、GUI 主窗
 口翻译均记录；`origin` 字段区分来源：`auto`（剪贴板）/ `trigger`（快捷键）/
 `cli` / `gui`。
+
+### 设置窗口
+
+`pardon-gui --settings`（或主窗口按钮/托盘菜单进入）。可修改 7 个
+`[daemon]` 字段（auto_translate / popup / show_word_badge /
+copy_translation / notify_timeout_ms / max_text_bytes / dedup_window_ms）、
+`default_engine` 与「默认 LLM provider」下拉。保存即写回 config.toml
+（toml_edit 原位写，文件里的注释原样保留）并触发 daemon reload——
+`[daemon]` 字段热生效；引擎相关项（default_engine / default_provider /
+provider 条目）改动后出现「重启 pardond」横幅按钮，一键重启。
+
+**LLM provider 管理**：providers 列表直接增/删/改（id / type /
+base_url / model）。守卫：删除正被 `llm.default_provider` 指向的
+provider 会被拒绝（先切走默认再删）；`default_engine = "llm"` 时必须
+选定一个有效 provider，悬空指向在保存前拦截；编辑改 id 时若旧 id 是
+默认指向，`default_provider` 同步改写。
+
+**api_key 政策（写入式）**：GUI 永不回显已存 key——读取侧脱敏，每个
+provider 只带 `has_api_key` 存在性标志；表单里的 key 框是密码框，留空＝
+保留现值，输入新值才覆盖（明文写入 config.toml 的 `api_key`，风险同
+[配置](#配置)节所述）；「清除已存 key」是编辑表单里的独立按钮。
+`api_key_env` 不经 GUI（读侧同样脱敏，配置里已有的原样保留）。key 只
+存于 config.toml。
+
+**主题**：「界面主题」下拉——跟随系统（prefers-color-scheme）/
+Catppuccin 摩卡 / Catppuccin 拿铁 / macOS 浅色 / Nord。选择即时生效并
+跨窗口（主窗口/弹窗/设置）同步。主题偏好存 GUI 本地（webview
+localStorage），不写 config.toml。
+
+### 系统托盘
+
+托盘随 pardond 启动（无 D-Bus 时自动降级，daemon 其余功能不受影响）。菜单：
+
+- **打开主窗口 / 设置**：GUI 在运行 → 事件聚焦已有窗口；未运行 → 拉起
+  `pardon-gui --main` / `--settings`；
+- **复制即翻译**（勾选）：实时开关剪贴板监听并持久化到 config.toml 的
+  `auto_translate`（重启 daemon 后仍保持）；
+- **退出 pardond**。
 
 ### UDS IPC 协议（GUI 契约）
 
@@ -339,63 +416,38 @@ pardon history --clear
 改路径规则或帧格式需两侧同步（`crates/core/src/ipc.rs` 与
 `gui/src-tauri/src/ipc.rs` 各自实现同一约定）。
 
-### 系统托盘
+## Roadmap
 
-托盘随 pardond 启动（无 D-Bus 时自动降级，daemon 其余功能不受影响）。菜单：
+- **M4 — Windows**：clipboard-win、RegisterHotKey、named-pipe IPC、SAPI TTS、
+  安装包（架构已按平台 trait 抽象预留）
+- **M5 — 生态（可选）**：StarDict 用户词库、PDF 断句清洗、更多语种、生词本
+- X11 支持视需求评估（当前 Wayland 优先）
 
-- **打开主窗口 / 设置**：GUI 在运行 → 事件聚焦已有窗口；未运行 → 拉起
-  `pardon-gui --main` / `--settings`；
-- **复制即翻译**（勾选）：实时开关剪贴板监听并持久化到 config.toml 的
-  `auto_translate`（重启 daemon 后仍保持）；
-- **退出 pardond**。
+## 开发
 
-### 设置窗口
+```bash
+# Rust workspace（core/cli/platform/daemon）
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --check
 
-`pardon-gui --settings`（或主窗口按钮/托盘菜单进入）。可修改 7 个
-`[daemon]` 字段（auto_translate / popup / show_word_badge /
-copy_translation / notify_timeout_ms / max_text_bytes / dedup_window_ms）、
-`default_engine` 与「默认 LLM provider」下拉。保存即写回 config.toml
-（toml_edit 原位写，文件里的注释原样保留）并触发 daemon reload——
-`[daemon]` 字段热生效；引擎相关项（default_engine / default_provider /
-provider 条目）改动后出现「重启 pardond」横幅按钮，一键重启。
+# GUI（独立 cargo 项目）
+cd gui && npm run check && npm run test && npm run build
+cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+```
 
-**LLM provider 管理**：providers 列表直接增/删/改（id / type /
-base_url / model）。守卫：删除正被 `llm.default_provider` 指向的
-provider 会被拒绝（先切走默认再删）；`default_engine = "llm"` 时必须
-选定一个有效 provider，悬空指向在保存前拦截；编辑改 id 时若旧 id 是
-默认指向，`default_provider` 同步改写。
+注意：GUI 构建顺序是「先 `npm run build` 产出 `dist/` 再 cargo」——tauri
+在编译期嵌入前端产物，`dist/` 缺失会 panic。
 
-**api_key 政策（写入式）**：GUI 永不回显已存 key——读取侧脱敏，每个
-provider 只带 `has_api_key` 存在性标志；表单里的 key 框是密码框，留空＝
-保留现值，输入新值才覆盖（明文写入 config.toml 的 `api_key`，风险同
-[配置](#配置)节所述）；「清除已存 key」是编辑表单里的独立按钮。
-`api_key_env` 不经 GUI（读侧同样脱敏，配置里已有的原样保留）。key 只
-存于 config.toml。
+## 数据与致谢
 
-**主题**：「界面主题」下拉——跟随系统（prefers-color-scheme）/
-Catppuccin 摩卡 / Catppuccin 拿铁 / macOS 浅色 / Nord。选择即时生效并
-跨窗口（主窗口/弹窗/设置）同步。主题偏好存 GUI 本地（webview
-localStorage），不写 config.toml。
-
-### 验收冒烟（手动清单）
-
-1. `pardond` 正常启动，托盘出现图标；`pardon status` 绿。
-2. `popup = false` 下按触发快捷键（M2 示例为 Mod+T）→ 桌面通知（M2 行为
-   不变）。
-3. 设置界面切 `popup = true` → 触发快捷键 → GUI 弹窗（词卡带音标/词形；
-   Esc/失焦隐藏；位置记忆）。
-4. 主窗口：查 `run` 出词卡 + 译文；查句子出译文；历史列表点击回填再译；
-   daemon 未运行时状态栏提示并可一键启动。
-5. 托盘：主窗口/设置拉起与聚焦；「复制即翻译」勾选即时生效并持久化
-   （重启 daemon 后仍保持）；退出。
-6. `pardon history --limit 5` 与 `--json` 输出正确；`pardon translate hello`
-   后条目出现。
-7. `~/.config/pardon/config.toml` 的注释在 GUI 改动后完好。
-8. GUI 在运行时，点托盘『打开主窗口』/『设置』应聚焦/打开对应窗口。
-9. 设置页 provider 管理：新增/编辑/删除 provider、切「默认 LLM
-   provider」——引擎相关项改完后「重启 pardond」横幅出现并可一键重启；
-   删除默认指向的 provider 被拒绝。
-10. 设置页切「界面主题」→ 主窗口/弹窗/设置三窗口即时生效（跨窗口同步）。
+- [ECDICT](https://github.com/skywind3000/ECDICT)（英→中主词典）与
+  [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cedict)（中→英）
+  的数据**不在本仓库内**，由用户自行下载导入（见
+  [dicts/README.md](dicts/README.md)）；两份词典的许可归其上游项目所有
+  （CC-CEDICT 为 CC BY-SA 4.0）。
+- 灵感与参考：pot-desktop、EasyDict、CopyTranslator、translate.nvim 等
+  前辈项目。
 
 ## License
 

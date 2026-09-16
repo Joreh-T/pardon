@@ -6,6 +6,7 @@ members = ["crates/core", "crates/cli", "crates/platform", "crates/daemon"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/Joreh-T/pardon"
 
 [workspace.dependencies]
 pardon-core = { path = "crates/core" }

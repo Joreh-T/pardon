@@ -12,35 +12,33 @@
 
 ## 安装
 
-插件随 pardon 仓库发布（本目录），暂无独立远程仓库，先按本地路径安装。
+独立仓库：**<https://github.com/Joreh-T/pardon.nvim>**（源码同源于
+[pardon](https://github.com/Joreh-T/pardon) 主仓库的 `nvim/` 目录）。
 
-lazy.nvim：
+lazy.nvim / LazyVim（在 `lua/plugins/` 下新建，如 `pardon.lua`）：
 
 ```lua
--- 直接指到本仓库的 nvim/ 目录
 {
-  "joreh/pardon.nvim",
-  dir = "~/path/to/pardon/nvim",
+  "Joreh-T/pardon.nvim",
   opts = {},
 }
 ```
 
-lazy.nvim 开发模式（仓库克隆在本地、随手改动随 `:Lazy sync` 生效）：
+lazy.nvim 开发模式（克隆在本地、随手改动随 `:Lazy sync` 生效）：
 
 ```lua
 {
-  "joreh/pardon.nvim",
+  "Joreh-T/pardon.nvim",
   dev = true,
-  dir = "~/path/to/pardon/nvim",
   opts = {},
 }
 ```
 
-rocks.nvim（本地路径安装需先 `:Rocks install rocks-dev.nvim`）：
+rocks.nvim：
 
 ```toml
 [plugins."pardon.nvim"]
-dir = "~/path/to/pardon/nvim"
+git = "https://github.com/Joreh-T/pardon.nvim"
 ```
 
 ## 配置
@@ -111,6 +109,27 @@ vim.keymap.set('x', '<leader>pt', '<Plug>(PardonTranslate)', { remap = true })
 也不依赖剪贴板——SSH 到远程机器的终端里，`float` / `replace` / `append`
 模式无需任何剪贴板转发（OSC52 等）即可工作。`register` 模式例外：它写
 `"+` 寄存器，远程环境需要有可用的 `clipboard` 支持。
+
+## 与全局划词快捷键配合（可选）
+
+桌面快捷键「翻译选区」（`pardon trigger selection`，读 Wayland PRIMARY
+选区）对 nvim 有一个已知错位：nvim 的 yank 只写系统剪贴板（CLIPBOARD），
+不写 PRIMARY——选区翻译读不到刚 yank 的内容。两种用法任选：
+
+- 在 nvim 里改用「翻译剪贴板」触发（`pardon trigger clipboard`）；
+- 或把每次 yank 同步写进 PRIMARY（加入你的 `config/autocmds.lua`）：
+
+```lua
+vim.api.nvim_create_autocmd("TextYankPost", {
+    desc = "Sync yank to Wayland PRIMARY so selection hotkeys translate it",
+    callback = function()
+        local content = table.concat(vim.v.event.regcontents or {}, "\n")
+        if content ~= "" then
+            vim.system({ "wl-copy", "--primary", "--type", "text/plain" }, { stdin = content })
+        end
+    end,
+})
+```
 
 ## 测试
 
