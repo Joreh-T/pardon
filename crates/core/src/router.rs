@@ -7,8 +7,33 @@ pub enum Route {
     Sentence(String),
 }
 
+/// 是否为应剥离的隐形字符：零宽/格式字符（Cf）与控制字符（保留 \t\n 等
+/// Unicode 空白）。PDF 复制常带零宽空格 U+200B/软连字符 U+00AD——它们
+/// 不是 Unicode 空白，`trim()` 不认，会让「单词+零宽字符」整串查词典
+/// 失配而误判成句子路由。
+fn is_invisible(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}'                 // soft hyphen（PDF 断字）
+        | '\u{200B}'..='\u{200F}'  // 零宽空格/ZWNJ/ZWJ/方向标记
+        | '\u{2060}'               // word joiner
+        | '\u{FEFF}'               // BOM
+        | '\u{202A}'..='\u{202E}'  // 双向嵌入控制
+        | '\u{2066}'..='\u{2069}'  // 双向隔离
+    ) || (c.is_control() && !c.is_whitespace())
+}
+
+/// 分流/查词前的文本清洗：剥隐形字符 + 首尾空白。内部保留 \t\n 等
+/// 正常空白（多行句子照常进句路由）。
+pub fn sanitize(text: &str) -> String {
+    text.chars()
+        .filter(|c| !is_invisible(*c))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 pub fn classify(text: &str, en: &dyn DictProvider, zh: &dyn DictProvider) -> Route {
-    let t = text.trim();
+    let t = &sanitize(text);
     if t.is_empty() {
         return Route::Sentence(t.into());
     }
@@ -126,5 +151,23 @@ mod tests {
     #[test]
     fn empty_is_sentence() {
         assert!(matches!(classify("   ", &EN, &ZH), Route::Sentence(_)));
+    }
+
+    /// 隐形字符清洗：单词 + 零宽空格/软连字符/BOM 应命中词典（词路由），
+    /// 而非整串失配落到句路由（真机复现：U+200B 曾被 LLM 翻译）。
+    #[test]
+    fn invisible_chars_are_stripped_before_word_lookup() {
+        assert!(matches!(classify("run\u{200B}", &EN, &ZH), Route::Word(w) if w == "run"));
+        assert!(matches!(classify("run\u{FEFF}", &EN, &ZH), Route::Word(w) if w == "run"));
+        assert!(matches!(classify("ru\u{00AD}n", &EN, &ZH), Route::Word(w) if w == "run"));
+        assert!(matches!(classify(" run\u{2060} ", &EN, &ZH), Route::Word(w) if w == "run"));
+    }
+
+    /// 清洗保留正文语义：句中零宽字符剥除后仍按句子路由（不吞内容）。
+    #[test]
+    fn sanitize_strips_invisible_but_keeps_text() {
+        assert_eq!(sanitize("hello\u{200B} world\u{00AD}"), "hello world");
+        assert_eq!(sanitize("多行\n句子\t保持"), "多行\n句子\t保持");
+        assert_eq!(sanitize("\u{200B}"), "");
     }
 }

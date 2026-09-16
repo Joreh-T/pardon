@@ -140,8 +140,10 @@ impl Pipeline {
 
     /// 查词：zh → CEDICT，en → ECDICT。未命中返回 `found:false` 卡片并填
     /// suggestions（en 用 ECDICT 编辑距离推荐；zh 无推荐来源，留空）。
+    /// 输入先过 [`router::sanitize`]（零宽字符等会让整串词典失配）。
     pub fn lookup(&self, word: &str) -> WordCard {
-        let lang = lang::detect(word);
+        let word = router::sanitize(word);
+        let lang = lang::detect(&word);
         let miss = || WordCard {
             found: false,
             word: word.to_string(),
@@ -154,14 +156,14 @@ impl Pipeline {
             tags: Vec::new(),
             source: if lang == Lang::Zh { "cedict" } else { "ecdict" }.to_string(),
             suggestions: if lang == Lang::En {
-                self.ecdict.suggest(word)
+                self.ecdict.suggest(&word)
             } else {
                 Vec::new()
             },
         };
         match lang {
-            Lang::Zh => self.cedict.lookup(word).unwrap_or_else(miss),
-            Lang::En => self.ecdict.lookup(word).unwrap_or_else(miss),
+            Lang::Zh => self.cedict.lookup(&word).unwrap_or_else(miss),
+            Lang::En => self.ecdict.lookup(&word).unwrap_or_else(miss),
         }
     }
 
