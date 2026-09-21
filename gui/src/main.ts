@@ -1,5 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { historyList, lookup, status, translate } from './api';
+import { Epoch } from './epoch';
 import { escapeHtml, renderCardHTML, renderHistoryHTML, renderTranslationHTML } from './render';
 import type { HistoryEntry } from './types';
 import { invoke } from '@tauri-apps/api/core';
@@ -16,6 +17,9 @@ let showBadge = false;
 // 快捷键拉起时顺带把整个 pardon 栈带起来）；失败才落回手动按钮。成功后复位，
 // daemon 下次掉线再自动拉一次——不会在持续失联时循环重试。
 let autoStartArmed = true;
+// 翻译世代守卫：连续翻译时只让最新一代写结果区，迟到的旧结果丢弃
+// （daemon 无取消协议，A 请求仍在后台跑完，但不再覆盖 B 的显示）。
+const translateEpoch = new Epoch();
 
 async function refreshHistory(): Promise<void> {
   try {
@@ -29,9 +33,11 @@ async function refreshHistory(): Promise<void> {
 async function doTranslate(text: string): Promise<void> {
   const t = text.trim();
   if (!t) return;
+  const me = translateEpoch.begin();
   $('#result').innerHTML = '<div class="empty">翻译中…</div>';
   // 词卡与翻译并行；词卡命中则上方展示（句子翻译只有译文区）
   const [t2, card] = await Promise.allSettled([translate(t), lookup(t)]);
+  if (!translateEpoch.isCurrent(me)) return; // 已被更新的翻译取代
   if (t2.status === 'rejected') {
     $('#result').innerHTML = `<div class="empty fail">${escapeHtml(String(t2.reason))}</div>`;
     return;
