@@ -48,10 +48,20 @@ pub fn classify(text: &str, en: &dyn DictProvider, zh: &dyn DictProvider) -> Rou
     }
     let words: Vec<&str> = t.split_whitespace().collect();
     if words.len() <= 2 {
+        // 逐词回退只服务「一个真词 + 干扰词」的选区（如 "run §1"）：
+        // 恰好一个词命中词典时查该词。两个词都命中词典的是真短语
+        // （"word query"）——整短语未收录时只查首词会丢掉后半内容
+        // （错误分词），改走句路由整体翻译。
+        let mut hit: Option<&str> = None;
+        let mut hits = 0;
         for w in &words {
             if en.lookup(w).is_some() {
-                return Route::Word((*w).to_string());
+                hits += 1;
+                hit = Some(w);
             }
+        }
+        if hits == 1 {
+            return Route::Word(hit.unwrap().to_string());
         }
     }
     Route::Sentence(t.into())
@@ -67,19 +77,24 @@ mod tests {
     }
     impl DictProvider for FakeDict {
         fn lookup(&self, w: &str) -> Option<WordCard> {
-            self.words.contains(&w).then(|| WordCard {
-                found: true,
-                word: w.into(),
-                phonetic: None,
-                pos: vec![],
-                definition: vec![],
-                exchange: None,
-                collins: None,
-                oxford: false,
-                tags: vec![],
-                source: "fake".into(),
-                suggestions: vec![],
-            })
+            // 对齐真实 ECDICT 的 COLLATE NOCASE（不区分大小写）
+            self.words
+                .iter()
+                .copied()
+                .find(|k| k.eq_ignore_ascii_case(w))
+                .map(|k| WordCard {
+                    found: true,
+                    word: k.into(),
+                    phonetic: None,
+                    pos: vec![],
+                    definition: vec![],
+                    exchange: None,
+                    collins: None,
+                    oxford: false,
+                    tags: vec![],
+                    source: "fake".into(),
+                    suggestions: vec![],
+                })
         }
         fn suggest(&self, _: &str) -> Vec<String> {
             vec![]
@@ -87,7 +102,7 @@ mod tests {
     }
 
     const EN: FakeDict = FakeDict {
-        words: &["run", "give", "give up", "gave"],
+        words: &["run", "give", "give up", "gave", "word", "query"],
     };
     const ZH: FakeDict = FakeDict {
         words: &["你好", "翻译", "非常好"],
@@ -111,6 +126,21 @@ mod tests {
             matches!(r, Route::Word(w) if w == "give"),
             "两词短语未收录时逐词回退"
         );
+    }
+
+    /// 真机复现：查 "word query" 曾只查首词 word、丢弃 query（错误分词）。
+    /// 两个词都在词典里的是真短语：整短语未收录时应走句路由整体翻译，
+    /// 而不是静默只取首词。
+    #[test]
+    fn en_two_dict_words_phrase_is_sentence() {
+        assert!(matches!(
+            classify("word query", &EN, &ZH),
+            Route::Sentence(_)
+        ));
+        assert!(matches!(
+            classify("Word Query", &EN, &ZH),
+            Route::Sentence(_)
+        ));
     }
 
     #[test]
